@@ -1,4 +1,5 @@
 #include "DungeonChallenge.h"
+#include "ParagonUtils.h"
 #include "Log.h"
 #include "World.h"
 #include "Group.h"
@@ -27,6 +28,7 @@ DungeonChallengeMgr::DungeonChallengeMgr()
     , _announceOnLogin(true)
     , _deathPenaltySeconds(15)
     , _gameObjectEntry(CHALLENGE_GO_ENTRY)
+    , _paragonXPPerLevel(10)
     , _rng(std::random_device{}())
 {
 }
@@ -48,9 +50,10 @@ void DungeonChallengeMgr::LoadConfig(bool /*reload*/)
     _announceOnLogin = sConfigMgr->GetOption<bool>("DungeonChallenge.AnnounceOnLogin", true);
     _deathPenaltySeconds = sConfigMgr->GetOption<uint32>("DungeonChallenge.DeathPenaltySeconds", 15);
     _gameObjectEntry = sConfigMgr->GetOption<uint32>("DungeonChallenge.GameObjectEntry", CHALLENGE_GO_ENTRY);
+    _paragonXPPerLevel = sConfigMgr->GetOption<uint32>("DungeonChallenge.ParagonXPPerLevel", 10);
 
-    LOG_INFO("module", ">> mod-dungeon-challenge: Configuration loaded (Enabled: {}, MaxDifficulty: {}, AffixPct: {}%)",
-        _enabled ? "Yes" : "No", _maxDifficulty, _affixPercentage);
+    LOG_INFO("module", ">> mod-dungeon-challenge: Configuration loaded (Enabled: {}, MaxDifficulty: {}, AffixPct: {}%, ParagonXP/Level: {})",
+        _enabled ? "Yes" : "No", _maxDifficulty, _affixPercentage, _paragonXPPerLevel);
 }
 
 void DungeonChallengeMgr::LoadDungeonData()
@@ -110,16 +113,16 @@ void DungeonChallengeMgr::LoadAffixData()
     // Every 10 levels adds +1 affix to the pool.
     // Selected mobs receive ALL available affixes for the current difficulty.
     _affixes = {
-        { AFFIX_FORTIFIED,   "Fortified",   "Mob has +40% HP and +20% damage.", 1  },
-        { AFFIX_BOLSTERING,  "Bolstering",  "When a mob dies, nearby allies gain +20% damage and HP.", 10 },
-        { AFFIX_RAGING,      "Raging",      "Mobs below 30% HP gain +50% damage (enrage).", 20 },
-        { AFFIX_SANGUINE,    "Sanguine",    "Dying mobs leave a healing zone for other mobs.", 30 },
-        { AFFIX_BURSTING,    "Bursting",    "Mob death causes AoE damage to all players (stacking).", 40 },
-        { AFFIX_NECROTIC,    "Necrotic",    "Melee attacks apply stacking healing reduction.", 50 },
-        { AFFIX_EXPLOSIVE,   "Explosive",   "Mobs periodically spawn explosive orbs.", 60 },
-        { AFFIX_VOLCANIC,    "Volcanic",    "Spawns fire zones under ranged players.", 70 },
-        { AFFIX_STORMING,    "Storming",    "Spawns moving tornadoes around the mob.", 80 },
-        { AFFIX_INSPIRING,   "Inspiring",   "Nearby allies cannot be interrupted.", 90 },
+        { AFFIX_CALL_FOR_HELP, "Call for Help", "Calls allies within 30y for help when entering combat.", 10 },
+        { AFFIX_SPEEDY,        "Speedy",        "+100% movement speed and +10% attack speed.", 20 },
+        { AFFIX_BIG_BOY,       "Big Boy",       "+50% HP and increased size.", 30 },
+        { AFFIX_IMMOLATION,    "Immolation Aura", "Deals periodic fire damage (Level x 80) to nearby players.", 40 },
+        { AFFIX_CC_IMMUNITY,   "CC Immunity",   "Immune to all crowd control effects.", 50 },
+        { AFFIX_HEAVY_HITS,    "Heavy Hits",    "+33% damage dealt.", 60 },
+        { AFFIX_LIL_BRO,       "Lil' Bro",      "Splits into 2 copies on death (1->2->4), each with -90% HP.", 70 },
+        { AFFIX_DAMAGE_REDUCE, "Damage Reduce", "Allies within 30y take 25% less damage.", 80 },
+        { AFFIX_BIGGER_BOY,    "Bigger Boy",    "Additional +50% HP, increased size and +10% damage.", 90 },
+        { AFFIX_HELL_TOUCHED,  "Hell Touched",  "Deals 666 hellfire damage on hit. Reduces stats by 10% (10s, stacks 10).", 100 },
     };
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} affixes.", _affixes.size());
@@ -468,8 +471,8 @@ void DungeonChallengeMgr::AssignAffixesToCreatures(ChallengeRun* run, Map* map)
             continue;
         if (creature->IsPet() || creature->IsSummon() || creature->IsTotem())
             continue;
-        // Skip bosses (rank 3 = boss)
-        if (creature->isWorldBoss() || creature->GetCreatureTemplate()->rank >= 3)
+        // Skip bosses (world bosses, dungeon bosses, rank 3+)
+        if (creature->isWorldBoss() || creature->IsDungeonBoss() || creature->GetCreatureTemplate()->rank >= 3)
             continue;
         // Skip critters and non-combat NPCs
         if (creature->GetCreatureTemplate()->unit_class == 0)
@@ -511,35 +514,82 @@ void DungeonChallengeMgr::AssignAffixesToCreatures(ChallengeRun* run, Map* map)
         affixCount, candidates.size(), run->instanceId);
 }
 
-void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChallengeAffix affix, uint32 /*difficulty*/)
+void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChallengeAffix affix, uint32 difficulty)
 {
     if (!creature)
         return;
 
     AffixInfo const* info = GetAffixInfo(affix);
+    auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
 
     switch (affix)
     {
-        case AFFIX_FORTIFIED:
-        {
-            // +40% HP, +20% damage
-            creature->SetMaxHealth(creature->GetMaxHealth() * 1.4f);
+        case AFFIX_SPEEDY:
+            creature->CastSpell(creature, SPELL_AFFIX_SPEEDY, true);
+            break;
+
+        case AFFIX_BIG_BOY:
+            // +50% HP; size handled by DBC aura
+            creature->SetMaxHealth(static_cast<uint32>(creature->GetMaxHealth() * 1.5f));
             creature->SetFullHealth();
-            auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
-            creatureData->extraDamageMultiplier *= 1.2f;
+            creature->CastSpell(creature, SPELL_AFFIX_BIG_BOY, true);
+            break;
+
+        case AFFIX_CC_IMMUNITY:
+            creature->CastSpell(creature, SPELL_AFFIX_CC_IMMUNITY, true);
+            break;
+
+        case AFFIX_HEAVY_HITS:
+            creature->CastSpell(creature, SPELL_AFFIX_HEAVY_HITS, true);
+            break;
+
+        case AFFIX_BIGGER_BOY:
+            // +50% HP; size and damage handled by DBC aura
+            creature->SetMaxHealth(static_cast<uint32>(creature->GetMaxHealth() * 1.5f));
+            creature->SetFullHealth();
+            creature->CastSpell(creature, SPELL_AFFIX_BIGGER_BOY, true);
+            break;
+
+        case AFFIX_DAMAGE_REDUCE:
+        {
+            // Visual aura on the creature itself
+            creature->CastSpell(creature, SPELL_AFFIX_DAMAGE_REDUCE, true);
+            // Apply -25% incoming damage to all allies within 30y
+            Map* map = creature->GetMap();
+            if (map)
+            {
+                for (auto const& pair : map->GetCreatureBySpawnIdStore())
+                {
+                    Creature* ally = pair.second;
+                    if (!ally || !ally->IsAlive())
+                        continue;
+                    if (ally->IsPet() || ally->IsSummon())
+                        continue;
+                    if (ally->GetDistance(creature) > 30.0f)
+                        continue;
+                    auto* allyData = ally->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+                    allyData->incomingDamageReduction = std::max(allyData->incomingDamageReduction, 0.25f);
+                }
+            }
             break;
         }
-        case AFFIX_BOLSTERING:
-        case AFFIX_RAGING:
-        case AFFIX_SANGUINE:
-        case AFFIX_NECROTIC:
-        case AFFIX_BURSTING:
-        case AFFIX_EXPLOSIVE:
-        case AFFIX_VOLCANIC:
-        case AFFIX_STORMING:
-        case AFFIX_INSPIRING:
-            // These are handled via event hooks in the scripts
+
+        case AFFIX_IMMOLATION:
+            creature->CastSpell(creature, SPELL_AFFIX_IMMOLATION, true);
             break;
+
+        case AFFIX_HELL_TOUCHED:
+            creature->CastSpell(creature, SPELL_AFFIX_HELL_TOUCHED, true);
+            break;
+
+        case AFFIX_CALL_FOR_HELP:
+            creature->CastSpell(creature, SPELL_AFFIX_CALL_FOR_HELP, true);
+            break;
+
+        case AFFIX_LIL_BRO:
+            creature->CastSpell(creature, SPELL_AFFIX_LIL_BRO, true);
+            break;
+
         default:
             break;
     }
@@ -735,10 +785,14 @@ void DungeonChallengeMgr::DistributeRewards(ChallengeRun const* run)
 
     bool inTime = !run->IsTimedOut();
     uint32 goldReward = _lootBonusPerLevel * run->difficulty;
+    uint32 paragonXP = _paragonXPPerLevel * run->difficulty;
 
     // Bonus for completing in time
     if (inTime)
+    {
         goldReward *= 2;
+        paragonXP *= 2;
+    }
 
     for (auto const& guid : run->participants)
     {
@@ -748,6 +802,10 @@ void DungeonChallengeMgr::DistributeRewards(ChallengeRun const* run)
 
         // Gold reward
         player->ModifyMoney(goldReward);
+
+        // Paragon XP reward
+        if (paragonXP > 0)
+            IncreaseParagonXP(player, paragonXP);
 
         // Announce to player
         uint32 totalTime = run->GetEffectiveElapsed();
@@ -759,16 +817,18 @@ void DungeonChallengeMgr::DistributeRewards(ChallengeRun const* run)
             ChatHandler(player->GetSession()).PSendSysMessage(
                 "|cff00ff00[Dungeon Challenge]|r Challenge completed! "
                 "Level: |cffff8000{}|r | Time: |cff00ff00{}:{:02}|r (Penalty: +{}s) | Deaths: {} | "
-                "Reward: |cffffcc00{} Gold|r",
-                run->difficulty, minutes, seconds, run->penaltyTime, run->deathCount, goldReward / 10000);
+                "Reward: |cffffcc00{} Gold|r | |cff00ccff+{} Paragon XP|r",
+                run->difficulty, minutes, seconds, run->penaltyTime, run->deathCount,
+                goldReward / 10000, paragonXP);
         }
         else
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
                 "|cffff0000[Dungeon Challenge]|r Challenge completed over time! "
                 "Level: |cffff8000{}|r | Time: |cffff0000{}:{:02}|r (Penalty: +{}s) | Deaths: {} | "
-                "Reward: |cffffcc00{} Gold|r",
-                run->difficulty, minutes, seconds, run->penaltyTime, run->deathCount, goldReward / 10000);
+                "Reward: |cffffcc00{} Gold|r | |cff00ccff+{} Paragon XP|r",
+                run->difficulty, minutes, seconds, run->penaltyTime, run->deathCount,
+                goldReward / 10000, paragonXP);
         }
     }
 }

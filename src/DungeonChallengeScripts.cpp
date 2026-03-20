@@ -213,8 +213,6 @@ class DungeonChallengeCreatureScript : public AllCreatureScript
 public:
     DungeonChallengeCreatureScript() : AllCreatureScript("DungeonChallengeCreatureScript") { }
 
-    static constexpr uint32 SPELL_ENRAGE_VISUAL = 8599;
-
     void OnAllCreatureUpdate(Creature* creature, uint32 diff) override
     {
         if (!sDungeonChallengeMgr->IsEnabled())
@@ -235,25 +233,56 @@ public:
         if (!run || run->state != CHALLENGE_STATE_RUNNING)
             return;
 
-        // Handle RAGING affix: enrage below 30% HP
-        if (creatureData->HasAffix(AFFIX_RAGING) && creature->IsAlive() && !creatureData->hasEnraged)
+        if (!creature->IsAlive() || creatureData->affixes.empty())
+            return;
+
+        // --- CALL FOR HELP: pull allies within 30y when entering combat ---
+        if (creatureData->HasAffix(AFFIX_CALL_FOR_HELP) && creature->IsInCombat() && !creatureData->hasCalled)
         {
-            if (creature->GetHealthPct() < 30.0f)
+            creatureData->hasCalled = true;
+            Unit* victim = creature->GetVictim();
+            if (victim)
             {
-                creatureData->hasEnraged = true;
-                creatureData->extraDamageMultiplier *= 1.5f;
+                for (auto const& pair : map->GetCreatureBySpawnIdStore())
+                {
+                    Creature* ally = pair.second;
+                    if (!ally || !ally->IsAlive() || ally == creature || ally->IsInCombat())
+                        continue;
+                    if (ally->IsPet() || ally->IsSummon() || ally->IsTotem())
+                        continue;
+                    if (ally->GetCreatureTemplate()->faction == 35)
+                        continue;
+                    if (ally->GetDistance(creature) > 30.0f)
+                        continue;
 
-                creature->AddAura(SPELL_ENRAGE_VISUAL, creature);
+                    ally->AI()->AttackStart(victim);
+                }
 
-                // Announce
+                Map::PlayerList const& players = map->GetPlayers();
+                for (auto const& ref : players)
+                    if (Player* p = ref.GetSource())
+                        ChatHandler(p->GetSession()).PSendSysMessage(
+                            "|cffff8000[Affix: Call for Help]|r |cffff0000{}|r called allies for help!",
+                            creature->GetName());
+            }
+        }
+
+        // --- IMMOLATION AURA: periodic fire damage to nearby players ---
+        if (creatureData->HasAffix(AFFIX_IMMOLATION))
+        {
+            creatureData->immolationTimer += diff;
+            if (creatureData->immolationTimer >= 2000)
+            {
+                creatureData->immolationTimer -= 2000;
+                uint32 damage = run->difficulty * 80;
+
                 Map::PlayerList const& players = map->GetPlayers();
                 for (auto const& ref : players)
                 {
                     if (Player* player = ref.GetSource())
                     {
-                        ChatHandler(player->GetSession()).PSendSysMessage(
-                            "|cffff8000[Affix: Raging]|r |cffff0000{}|r is enraged! (+50%% damage)",
-                            creature->GetName());
+                        if (player->IsAlive() && creature->GetDistance(player) <= 8.0f)
+                            player->EnvironmentalDamage(DAMAGE_FIRE, damage);
                     }
                 }
             }
@@ -343,114 +372,75 @@ public:
             }
         }
 
-        // Process affix on-death effects (creature can have multiple affixes)
+        // Process affix on-death effects
         auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+
+        // Remove loot from non-lootable Lil' Bro copies (generation > 0)
+        if (creatureData->noLoot)
+        {
+            creature->RemoveFlag(UNIT_DYNAMIC_FLAGS, UNIT_DYNFLAG_LOOTABLE);
+            creature->loot.clear();
+        }
 
         if (creatureData->affixes.empty())
             return;
 
-        for (auto const& affix : creatureData->affixes)
+        // --- LIL' BRO: split 1->2->4 (generation 0->1->2, stop at gen 2) ---
+        if (creatureData->HasAffix(AFFIX_LIL_BRO) && creatureData->lilBroGeneration < 2)
         {
-            switch (affix)
-            {
-                case AFFIX_BOLSTERING:
-                    HandleBolsteringDeath(creature, run, map);
-                    break;
-                case AFFIX_BURSTING:
-                    HandleBurstingDeath(creature, run, map);
-                    break;
-                case AFFIX_SANGUINE:
-                    HandleSanguineDeath(creature, run, map);
-                    break;
-                default:
-                    break;
-            }
+            HandleLilBroDeath(creature, run, map);
         }
     }
 
 private:
-    void HandleBolsteringDeath(Creature* creature, ChallengeRun* run, Map* map)
+    void HandleLilBroDeath(Creature* creature, ChallengeRun* run, Map* map)
     {
-        float range = 15.0f;
+        auto* parentData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+        uint8 nextGeneration = parentData->lilBroGeneration + 1;
 
-        for (auto const& pair : map->GetCreatureBySpawnIdStore())
+        uint32 entry = creature->GetEntry();
+        float x = creature->GetPositionX();
+        float y = creature->GetPositionY();
+        float z = creature->GetPositionZ();
+        float o = creature->GetOrientation();
+
+        // Calculate HP for copies: 10% of the creature's max health
+        uint32 copyHealth = std::max(1u, static_cast<uint32>(creature->GetMaxHealth() * 0.1f));
+
+        for (uint32 i = 0; i < 2; ++i)
         {
-            Creature* ally = pair.second;
-            if (!ally || !ally->IsAlive() || ally == creature)
-                continue;
-            if (ally->GetDistance(creature) > range)
-                continue;
-            if (ally->IsPet() || ally->IsSummon())
-                continue;
-            if (ally->GetCreatureTemplate()->faction == 35)
+            float offsetX = (i == 0) ? 2.0f : -2.0f;
+            float offsetY = (i == 0) ? 1.0f : -1.0f;
+
+            Creature* copy = creature->SummonCreature(entry, x + offsetX, y + offsetY, z, o,
+                TEMPSUMMON_CORPSE_TIMED_DESPAWN, 60000);
+            if (!copy)
                 continue;
 
-            ally->SetMaxHealth(ally->GetMaxHealth() * 1.2f);
-            ally->SetFullHealth();
+            copy->SetMaxHealth(copyHealth);
+            copy->SetFullHealth();
 
-            // Increase damage multiplier via DataMap
-            auto* allyData = ally->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
-            allyData->extraDamageMultiplier *= 1.2f;
+            auto* copyData = copy->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+            copyData->lilBroGeneration = nextGeneration;
+            copyData->affixes = parentData->affixes;
+            copyData->processed = true;
+
+            // Apply difficulty damage scaling
+            copyData->extraDamageMultiplier = sDungeonChallengeMgr->GetDamageMultiplier(run->difficulty);
+
+            // Only original (generation 0) drops loot; all splits don't
+            copyData->noLoot = true;
+
+            if (Unit* victim = creature->GetVictim())
+                copy->AI()->AttackStart(victim);
         }
 
         Map::PlayerList const& players = map->GetPlayers();
         for (auto const& ref : players)
-        {
-            if (Player* player = ref.GetSource())
-            {
-                ChatHandler(player->GetSession()).PSendSysMessage(
-                    "|cffff8000[Affix: Bolstering]|r Nearby mobs have been empowered! (+20%%)");
-            }
-        }
-    }
-
-    void HandleBurstingDeath(Creature* creature, ChallengeRun* run, Map* map)
-    {
-        Map::PlayerList const& players = map->GetPlayers();
-        for (auto const& ref : players)
-        {
-            if (Player* player = ref.GetSource())
-            {
-                if (!player->IsAlive())
-                    continue;
-
-                int32 damage = player->GetMaxHealth() * 0.05f;
-                player->EnvironmentalDamage(DAMAGE_FIRE, damage);
-
-                ChatHandler(player->GetSession()).PSendSysMessage(
-                    "|cffff8000[Affix: Bursting]|r AoE damage: |cffff0000-{}|r HP!",
-                    damage);
-            }
-        }
-    }
-
-    void HandleSanguineDeath(Creature* creature, ChallengeRun* run, Map* map)
-    {
-        float range = 8.0f;
-
-        for (auto const& pair : map->GetCreatureBySpawnIdStore())
-        {
-            Creature* ally = pair.second;
-            if (!ally || !ally->IsAlive() || ally == creature)
-                continue;
-            if (ally->GetDistance(creature) > range)
-                continue;
-            if (ally->IsPet() || ally->IsSummon())
-                continue;
-
-            int32 healAmount = ally->GetMaxHealth() * 0.2f;
-            ally->ModifyHealth(healAmount);
-        }
-
-        Map::PlayerList const& players = map->GetPlayers();
-        for (auto const& ref : players)
-        {
-            if (Player* player = ref.GetSource())
-            {
-                ChatHandler(player->GetSession()).PSendSysMessage(
-                    "|cffff8000[Affix: Sanguine]|r Healing zone! Nearby mobs are being healed!");
-            }
-        }
+            if (Player* p = ref.GetSource())
+                ChatHandler(p->GetSession()).PSendSysMessage(
+                    "|cffff8000[Affix: Lil' Bro]|r |cffff0000{}|r split into two!",
+                    creature->GetName());
     }
 };
 
@@ -468,12 +458,7 @@ public:
         if (!sDungeonChallengeMgr->IsEnabled())
             return;
 
-        // Only modify damage from creatures in challenge dungeons
-        Creature* creature = attacker ? attacker->ToCreature() : nullptr;
-        if (!creature)
-            return;
-
-        Map* map = creature->GetMap();
+        Map* map = attacker ? attacker->GetMap() : (target ? target->GetMap() : nullptr);
         if (!map || !map->IsDungeon())
             return;
 
@@ -481,10 +466,32 @@ public:
         if (!run || run->state != CHALLENGE_STATE_RUNNING)
             return;
 
-        auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
-        if (creatureData->extraDamageMultiplier != 1.0f)
+        // --- Creature → Player: damage multiplier + Hell Touched ---
+        Creature* creature = attacker ? attacker->ToCreature() : nullptr;
+        if (creature)
         {
-            damage = static_cast<uint32>(damage * creatureData->extraDamageMultiplier);
+            auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+            if (creatureData->extraDamageMultiplier != 1.0f)
+                damage = static_cast<uint32>(damage * creatureData->extraDamageMultiplier);
+
+            // Hell Touched: extra 666 unmitigatable fire+shadow damage + debuff
+            if (creatureData->HasAffix(AFFIX_HELL_TOUCHED))
+            {
+                if (Player* playerTarget = target->ToPlayer())
+                {
+                    playerTarget->EnvironmentalDamage(DAMAGE_FIRE, 666);
+                    creature->CastSpell(playerTarget, SPELL_AFFIX_HELL_TOUCHED_DEBUFF, true);
+                }
+            }
+        }
+
+        // --- Player → Creature: damage reduction from DAMAGE_REDUCE affix ---
+        Creature* targetCreature = target ? target->ToCreature() : nullptr;
+        if (targetCreature)
+        {
+            auto* tData = targetCreature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+            if (tData->incomingDamageReduction > 0.0f)
+                damage = static_cast<uint32>(damage * (1.0f - tData->incomingDamageReduction));
         }
     }
 
@@ -493,11 +500,7 @@ public:
         if (!sDungeonChallengeMgr->IsEnabled())
             return;
 
-        Creature* creature = attacker ? attacker->ToCreature() : nullptr;
-        if (!creature)
-            return;
-
-        Map* map = creature->GetMap();
+        Map* map = attacker ? attacker->GetMap() : (target ? target->GetMap() : nullptr);
         if (!map || !map->IsDungeon())
             return;
 
@@ -505,23 +508,44 @@ public:
         if (!run || run->state != CHALLENGE_STATE_RUNNING)
             return;
 
-        auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
-
-        // Check for spell-specific override first
-        if (spellInfo)
+        // --- Creature → Player: spell override + damage multiplier + Hell Touched ---
+        Creature* creature = attacker ? attacker->ToCreature() : nullptr;
+        if (creature)
         {
-            SpellOverrideEntry const* override = sDungeonChallengeMgr->GetSpellOverride(spellInfo->Id, map->GetId());
-            if (override && override->modPct >= 0.0f)
+            auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+
+            // Check for spell-specific override first
+            if (spellInfo)
             {
-                damage = static_cast<int32>(damage * override->modPct);
-                return;
+                SpellOverrideEntry const* override = sDungeonChallengeMgr->GetSpellOverride(spellInfo->Id, map->GetId());
+                if (override && override->modPct >= 0.0f)
+                {
+                    damage = static_cast<int32>(damage * override->modPct);
+                    return;
+                }
+            }
+
+            if (creatureData->extraDamageMultiplier != 1.0f)
+                damage = static_cast<int32>(damage * creatureData->extraDamageMultiplier);
+
+            // Hell Touched: extra 666 fire+shadow on direct spell damage + debuff
+            if (creatureData->HasAffix(AFFIX_HELL_TOUCHED))
+            {
+                if (Player* playerTarget = target->ToPlayer())
+                {
+                    playerTarget->EnvironmentalDamage(DAMAGE_FIRE, 666);
+                    creature->CastSpell(playerTarget, SPELL_AFFIX_HELL_TOUCHED_DEBUFF, true);
+                }
             }
         }
 
-        // Apply general creature damage multiplier
-        if (creatureData->extraDamageMultiplier != 1.0f)
+        // --- Player → Creature: damage reduction ---
+        Creature* targetCreature = target ? target->ToCreature() : nullptr;
+        if (targetCreature)
         {
-            damage = static_cast<int32>(damage * creatureData->extraDamageMultiplier);
+            auto* tData = targetCreature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+            if (tData->incomingDamageReduction > 0.0f)
+                damage = static_cast<int32>(damage * (1.0f - tData->incomingDamageReduction));
         }
     }
 
@@ -555,11 +579,9 @@ public:
             }
         }
 
-        // Apply general creature damage multiplier
+        // Apply general creature damage multiplier (DoTs don't trigger Hell Touched)
         if (creatureData->extraDamageMultiplier != 1.0f)
-        {
             damage = static_cast<uint32>(damage * creatureData->extraDamageMultiplier);
-        }
     }
 };
 
