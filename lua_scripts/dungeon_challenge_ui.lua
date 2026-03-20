@@ -227,9 +227,10 @@ local function ClearContent()
     ScrollChild:Hide()
     ScrollChild:SetParent(nil)
 
-    -- Create fresh scroll child
+    -- Create fresh scroll child with proper width matching the scroll frame
     ScrollChild = CreateFrame("Frame", nil, ScrollFrame)
-    ScrollChild:SetSize(1, 1)
+    ScrollChild:SetWidth(ScrollFrame:GetWidth())
+    ScrollChild:SetHeight(1)
     ScrollFrame:SetScrollChild(ScrollChild)
     ScrollFrame:SetVerticalScroll(0)
 end
