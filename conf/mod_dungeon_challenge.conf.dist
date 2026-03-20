@@ -1,0 +1,57 @@
+###############################################################################
+# mod-dungeon-challenge Configuration
+###############################################################################
+
+[worldserver]
+
+###############################################################################
+# DUNGEON CHALLENGE MODULE
+#
+#   DungeonChallenge.Enable
+#       Enable/Disable the module
+#       Default: 1 (enabled)
+#
+#   DungeonChallenge.AffixPercentage
+#       Percentage of mobs in a dungeon that receive random affixes
+#       Default: 5
+#
+#   DungeonChallenge.MaxDifficulty
+#       Maximum difficulty level players can select
+#       Default: 20
+#
+#   DungeonChallenge.HealthMultiplierPerLevel
+#       Health multiplier added per difficulty level (percentage)
+#       e.g., 15 means +15% health per level -> Level 10 = +150%
+#       Default: 15
+#
+#   DungeonChallenge.DamageMultiplierPerLevel
+#       Damage multiplier added per difficulty level (percentage)
+#       e.g., 8 means +8% damage per level -> Level 10 = +80%
+#       Default: 8
+#
+#   DungeonChallenge.TimerBaseMinutes
+#       Base timer in minutes (adjusted per dungeon via DB)
+#       Default: 30
+#
+#   DungeonChallenge.LootBonusPerLevel
+#       Extra gold reward per difficulty level in copper
+#       Default: 50000 (5 gold)
+#
+#   DungeonChallenge.NpcEntry
+#       Entry ID for the Dungeon Challenge NPC
+#       Default: 500000
+#
+#   DungeonChallenge.AnnounceOnLogin
+#       Announce module on player login
+#       Default: 1
+#
+
+DungeonChallenge.Enable = 1
+DungeonChallenge.AffixPercentage = 5
+DungeonChallenge.MaxDifficulty = 20
+DungeonChallenge.HealthMultiplierPerLevel = 15
+DungeonChallenge.DamageMultiplierPerLevel = 8
+DungeonChallenge.TimerBaseMinutes = 30
+DungeonChallenge.LootBonusPerLevel = 50000
+DungeonChallenge.NpcEntry = 500000
+DungeonChallenge.AnnounceOnLogin = 1
