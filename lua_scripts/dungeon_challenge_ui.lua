@@ -668,19 +668,22 @@ end
 
 local ClientHandlers = {}
 
+-- NOTE: AIO always passes 'player' as the first argument to client handlers,
+-- even on the client side. All handlers must accept (player, ...) signature.
+
 -- Receive config via AIO init message (small payload)
-ClientHandlers.InitConfig = function(cfg)
+ClientHandlers.InitConfig = function(player, cfg)
     config = cfg or {}
 end
 
 -- Begin receiving dungeon/affix data (sent individually after login)
-ClientHandlers.InitBegin = function(dungeonCount, affixCount)
+ClientHandlers.InitBegin = function(player, dungeonCount, affixCount)
     dungeonData = {}
     affixData = {}
 end
 
 -- Receive a single dungeon (flat parameters, no nested tables)
-ClientHandlers.InitDungeon = function(mapId, name, timerMinutes, bossCount)
+ClientHandlers.InitDungeon = function(player, mapId, name, timerMinutes, bossCount)
     table.insert(dungeonData, {
         mapId        = mapId,
         name         = name,
@@ -690,7 +693,7 @@ ClientHandlers.InitDungeon = function(mapId, name, timerMinutes, bossCount)
 end
 
 -- Receive a single affix (flat parameters)
-ClientHandlers.InitAffix = function(id, name, desc, minDiff)
+ClientHandlers.InitAffix = function(player, id, name, desc, minDiff)
     table.insert(affixData, {
         id      = id,
         name    = name,
@@ -700,14 +703,14 @@ ClientHandlers.InitAffix = function(id, name, desc, minDiff)
 end
 
 -- All init data received
-ClientHandlers.InitComplete = function()
+ClientHandlers.InitComplete = function(player)
     DEFAULT_CHAT_FRAME:AddMessage(string.format(
         "|cff00ff00[Dungeon Challenge]|r Loaded %d dungeons, %d affixes.",
         #dungeonData, #affixData))
 end
 
 -- Server tells us to show the UI
-ClientHandlers.ShowUI = function()
+ClientHandlers.ShowUI = function(player)
     if MainFrame:IsShown() then
         MainFrame:Hide()
         return
@@ -726,22 +729,22 @@ ClientHandlers.ShowUI = function()
 end
 
 -- Receive leaderboard data
-ClientHandlers.LeaderboardData = function(mapId, entries)
+ClientHandlers.LeaderboardData = function(player, mapId, entries)
     ShowLeaderboardData(mapId, entries or {})
 end
 
 -- Receive personal runs data
-ClientHandlers.MyRunsData = function(entries)
+ClientHandlers.MyRunsData = function(player, entries)
     ShowMyRunsData(entries or {})
 end
 
 -- Receive snapshot data
-ClientHandlers.SnapshotData = function(mapId, entries)
+ClientHandlers.SnapshotData = function(player, mapId, entries)
     ShowSnapshotData(mapId, entries or {})
 end
 
 -- Challenge started notification
-ClientHandlers.ChallengeStarted = function(dungeonName, difficulty, starterName)
+ClientHandlers.ChallengeStarted = function(player, dungeonName, difficulty, starterName)
     DEFAULT_CHAT_FRAME:AddMessage(string.format(
         "|cff00ff00[Dungeon Challenge]|r |cffff8000%s|r started: "
         .. "|cff00ff00%s|r at Level |cffff8000%d|r!",
@@ -750,7 +753,7 @@ ClientHandlers.ChallengeStarted = function(dungeonName, difficulty, starterName)
 end
 
 -- Error from server
-ClientHandlers.Error = function(errorMsg)
+ClientHandlers.Error = function(player, errorMsg)
     DEFAULT_CHAT_FRAME:AddMessage(
         "|cffff0000[Dungeon Challenge]|r " .. (errorMsg or "Unknown error"))
 end
