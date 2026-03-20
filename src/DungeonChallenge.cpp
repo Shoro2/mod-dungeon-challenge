@@ -1,0 +1,576 @@
+#include "DungeonChallenge.h"
+#include "Log.h"
+#include "World.h"
+#include "Group.h"
+#include "MapMgr.h"
+#include "GameTime.h"
+
+// ============================================================================
+// Singleton
+// ============================================================================
+
+DungeonChallengeMgr* DungeonChallengeMgr::Instance()
+{
+    static DungeonChallengeMgr instance;
+    return &instance;
+}
+
+DungeonChallengeMgr::DungeonChallengeMgr()
+    : _enabled(true)
+    , _affixPercentage(5)
+    , _maxDifficulty(20)
+    , _healthMultPerLevel(0.15f)
+    , _damageMultPerLevel(0.08f)
+    , _timerBaseMinutes(30)
+    , _lootBonusPerLevel(50000)
+    , _npcEntry(500000)
+    , _announceOnLogin(true)
+    , _rng(std::random_device{}())
+{
+}
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+void DungeonChallengeMgr::LoadConfig(bool /*reload*/)
+{
+    _enabled = sConfigMgr->GetOption<bool>("DungeonChallenge.Enable", true);
+    _affixPercentage = sConfigMgr->GetOption<uint32>("DungeonChallenge.AffixPercentage", 5);
+    _maxDifficulty = sConfigMgr->GetOption<uint32>("DungeonChallenge.MaxDifficulty", 20);
+    _healthMultPerLevel = sConfigMgr->GetOption<float>("DungeonChallenge.HealthMultiplierPerLevel", 15.0f) / 100.0f;
+    _damageMultPerLevel = sConfigMgr->GetOption<float>("DungeonChallenge.DamageMultiplierPerLevel", 8.0f) / 100.0f;
+    _timerBaseMinutes = sConfigMgr->GetOption<uint32>("DungeonChallenge.TimerBaseMinutes", 30);
+    _lootBonusPerLevel = sConfigMgr->GetOption<uint32>("DungeonChallenge.LootBonusPerLevel", 50000);
+    _npcEntry = sConfigMgr->GetOption<uint32>("DungeonChallenge.NpcEntry", 500000);
+    _announceOnLogin = sConfigMgr->GetOption<bool>("DungeonChallenge.AnnounceOnLogin", true);
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Configuration loaded (Enabled: {}, MaxDifficulty: {}, AffixPct: {}%)",
+        _enabled ? "Yes" : "No", _maxDifficulty, _affixPercentage);
+}
+
+void DungeonChallengeMgr::LoadDungeonData()
+{
+    _dungeons.clear();
+
+    QueryResult result = WorldDatabase.Query("SELECT map_id, name, entrance_x, entrance_y, entrance_z, entrance_o, timer_minutes, boss_count FROM dungeon_challenge_dungeons");
+    if (!result)
+    {
+        LOG_WARN("module", ">> mod-dungeon-challenge: No dungeon data found in dungeon_challenge_dungeons table. Using defaults.");
+
+        // Default WotLK dungeons
+        _dungeons = {
+            { 574, "Utgarde Keep",              1.31f,  -16.57f, 15.21f, 0.0f, 25, 3 },
+            { 575, "Utgarde Pinnacle",          0.0f,   0.0f,    0.0f,   0.0f, 28, 4 },
+            { 576, "The Nexus",                 0.0f,   0.0f,    0.0f,   0.0f, 28, 4 },
+            { 578, "The Oculus",                0.0f,   0.0f,    0.0f,   0.0f, 35, 4 },
+            { 595, "Culling of Stratholme",     0.0f,   0.0f,    0.0f,   0.0f, 30, 5 },
+            { 599, "Halls of Stone",            0.0f,   0.0f,    0.0f,   0.0f, 28, 3 },
+            { 600, "Drak'Tharon Keep",          0.0f,   0.0f,    0.0f,   0.0f, 25, 4 },
+            { 601, "Azjol-Nerub",               0.0f,   0.0f,    0.0f,   0.0f, 20, 3 },
+            { 602, "Halls of Lightning",        0.0f,   0.0f,    0.0f,   0.0f, 28, 4 },
+            { 604, "Gundrak",                   0.0f,   0.0f,    0.0f,   0.0f, 28, 4 },
+            { 608, "Violet Hold",               0.0f,   0.0f,    0.0f,   0.0f, 25, 3 },
+            { 619, "Ahn'kahet: The Old Kingdom", 0.0f,  0.0f,    0.0f,   0.0f, 30, 5 },
+            { 632, "The Forge of Souls",        0.0f,   0.0f,    0.0f,   0.0f, 22, 2 },
+            { 650, "Trial of the Champion",     0.0f,   0.0f,    0.0f,   0.0f, 25, 3 },
+            { 658, "Pit of Saron",              0.0f,   0.0f,    0.0f,   0.0f, 28, 3 },
+            { 668, "Halls of Reflection",       0.0f,   0.0f,    0.0f,   0.0f, 25, 2 },
+        };
+
+        LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} default dungeons.", _dungeons.size());
+        return;
+    }
+
+    do
+    {
+        Field* fields = result->Fetch();
+        DungeonInfo info;
+        info.mapId         = fields[0].Get<uint32>();
+        info.name          = fields[1].Get<std::string>();
+        info.entranceX     = fields[2].Get<float>();
+        info.entranceY     = fields[3].Get<float>();
+        info.entranceZ     = fields[4].Get<float>();
+        info.entranceO     = fields[5].Get<float>();
+        info.timerMinutes  = fields[6].Get<uint32>();
+        info.totalCreatures = fields[7].Get<uint32>();
+        _dungeons.push_back(info);
+    } while (result->NextRow());
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} dungeons from database.", _dungeons.size());
+}
+
+void DungeonChallengeMgr::LoadAffixData()
+{
+    _affixes.clear();
+    _affixes = {
+        { AFFIX_BOLSTERING,  "Bolstering",  "Wenn ein Mob stirbt, erhalten nahestehende Verbündete +20% Schaden und HP.", 2 },
+        { AFFIX_RAGING,      "Raging",      "Mobs unter 30% HP erhalten +50% Schaden (Enrage).", 2 },
+        { AFFIX_SANGUINE,    "Sanguine",    "Sterbende Mobs hinterlassen eine heilende Zone für andere Mobs.", 4 },
+        { AFFIX_NECROTIC,    "Necrotic",    "Nahkampfangriffe reduzieren die erhaltene Heilung (stackend).", 4 },
+        { AFFIX_BURSTING,    "Bursting",    "Mob-Tod verursacht AoE-Schaden an allen Spielern (stackend).", 7 },
+        { AFFIX_EXPLOSIVE,   "Explosive",   "Mobs spawnen periodisch explosive Kugeln.", 7 },
+        { AFFIX_FORTIFIED,   "Fortified",   "Mob hat +40% HP und +20% Schaden.", 2 },
+        { AFFIX_VOLCANIC,    "Volcanic",    "Spawnt Feuerzonen unter entfernten Spielern.", 10 },
+        { AFFIX_STORMING,    "Storming",    "Spawnt sich bewegende Tornados um den Mob.", 10 },
+        { AFFIX_INSPIRING,   "Inspiring",   "Nahestehende Verbündete können nicht unterbrochen werden.", 14 },
+    };
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} affixes.", _affixes.size());
+}
+
+void DungeonChallengeMgr::LoadLeaderboard()
+{
+    _leaderboard.clear();
+
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT id, map_id, difficulty, completion_time, death_count, leader_name, "
+        "date_completed, participants FROM dungeon_challenge_leaderboard "
+        "ORDER BY map_id, difficulty, completion_time ASC");
+
+    if (!result)
+    {
+        LOG_INFO("module", ">> mod-dungeon-challenge: No leaderboard entries found.");
+        return;
+    }
+
+    uint32 count = 0;
+    do
+    {
+        Field* fields = result->Fetch();
+        LeaderboardEntry entry;
+        entry.rank           = 0; // calculated later
+        entry.mapId          = fields[1].Get<uint32>();
+        entry.difficulty     = fields[2].Get<uint32>();
+        entry.completionTime = fields[3].Get<uint32>();
+        entry.deathCount     = fields[4].Get<uint32>();
+        entry.leaderName     = fields[5].Get<std::string>();
+        entry.dateCompleted  = fields[6].Get<std::string>();
+
+        // Parse participants (comma-separated)
+        std::string participants = fields[7].Get<std::string>();
+        std::stringstream ss(participants);
+        std::string name;
+        while (std::getline(ss, name, ','))
+            if (!name.empty())
+                entry.participants.push_back(name);
+
+        _leaderboard[entry.mapId].push_back(entry);
+        ++count;
+    } while (result->NextRow());
+
+    // Assign ranks per dungeon
+    for (auto& [mapId, entries] : _leaderboard)
+    {
+        uint32 rank = 1;
+        for (auto& entry : entries)
+            entry.rank = rank++;
+    }
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} leaderboard entries.", count);
+}
+
+// ============================================================================
+// Getters
+// ============================================================================
+
+float DungeonChallengeMgr::GetHealthMultiplier(uint32 difficulty) const
+{
+    return 1.0f + (_healthMultPerLevel * difficulty);
+}
+
+float DungeonChallengeMgr::GetDamageMultiplier(uint32 difficulty) const
+{
+    return 1.0f + (_damageMultPerLevel * difficulty);
+}
+
+uint32 DungeonChallengeMgr::GetTimerForDungeon(uint32 mapId) const
+{
+    DungeonInfo const* info = GetDungeonInfo(mapId);
+    if (info && info->timerMinutes > 0)
+        return info->timerMinutes * 60;
+    return _timerBaseMinutes * 60;
+}
+
+DungeonInfo const* DungeonChallengeMgr::GetDungeonInfo(uint32 mapId) const
+{
+    for (auto const& d : _dungeons)
+        if (d.mapId == mapId)
+            return &d;
+    return nullptr;
+}
+
+AffixInfo const* DungeonChallengeMgr::GetAffixInfo(DungeonChallengeAffix affix) const
+{
+    for (auto const& a : _affixes)
+        if (a.id == affix)
+            return &a;
+    return nullptr;
+}
+
+std::vector<DungeonChallengeAffix> DungeonChallengeMgr::GetAffixesForDifficulty(uint32 difficulty) const
+{
+    std::vector<DungeonChallengeAffix> result;
+    for (auto const& a : _affixes)
+        if (difficulty >= a.minDifficulty)
+            result.push_back(a.id);
+    return result;
+}
+
+// ============================================================================
+// Challenge Run Management
+// ============================================================================
+
+ChallengeRun* DungeonChallengeMgr::GetChallengeRun(uint32 instanceId)
+{
+    auto it = _activeRuns.find(instanceId);
+    if (it != _activeRuns.end())
+        return &it->second;
+    return nullptr;
+}
+
+ChallengeRun* DungeonChallengeMgr::CreateChallengeRun(uint32 instanceId, uint32 mapId, uint32 difficulty, Player* leader)
+{
+    ChallengeRun run;
+    run.instanceId   = instanceId;
+    run.mapId        = mapId;
+    run.difficulty   = difficulty;
+    run.state        = CHALLENGE_STATE_PREPARING;
+    run.startTime    = 0;
+    run.timerDuration = GetTimerForDungeon(mapId);
+    run.elapsedTime  = 0;
+    run.deathCount   = 0;
+    run.leaderGuid   = leader->GetGUID();
+
+    DungeonInfo const* info = GetDungeonInfo(mapId);
+    run.totalBosses  = info ? info->totalCreatures : 3; // totalCreatures here stores boss count
+    run.bossesKilled = 0;
+
+    // Add leader and group members
+    run.participants.insert(leader->GetGUID());
+    if (Group* group = leader->GetGroup())
+    {
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+            if (Player* member = ref->GetSource())
+                run.participants.insert(member->GetGUID());
+    }
+
+    _activeRuns[instanceId] = run;
+    LOG_INFO("module", ">> mod-dungeon-challenge: Created challenge run for instance {} (map: {}, difficulty: {})",
+        instanceId, mapId, difficulty);
+
+    return &_activeRuns[instanceId];
+}
+
+void DungeonChallengeMgr::RemoveChallengeRun(uint32 instanceId)
+{
+    _activeRuns.erase(instanceId);
+}
+
+void DungeonChallengeMgr::StartRun(ChallengeRun* run)
+{
+    if (!run || run->state != CHALLENGE_STATE_PREPARING)
+        return;
+
+    run->state = CHALLENGE_STATE_RUNNING;
+    run->startTime = GameTime::GetGameTime().count();
+    run->elapsedTime = 0;
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Run started for instance {} (difficulty: {}, timer: {}s)",
+        run->instanceId, run->difficulty, run->timerDuration);
+}
+
+void DungeonChallengeMgr::UpdateRun(ChallengeRun* run, uint32 diff)
+{
+    if (!run || run->state != CHALLENGE_STATE_RUNNING)
+        return;
+
+    run->elapsedTime = GameTime::GetGameTime().count() - run->startTime;
+
+    if (run->IsTimedOut())
+    {
+        // Don't auto-fail, just mark as over time
+        // Players can still complete, but won't get bonus rewards
+    }
+}
+
+void DungeonChallengeMgr::CompleteRun(ChallengeRun* run)
+{
+    if (!run || run->state != CHALLENGE_STATE_RUNNING)
+        return;
+
+    run->state = CHALLENGE_STATE_COMPLETED;
+    run->elapsedTime = GameTime::GetGameTime().count() - run->startTime;
+
+    SaveRunToLeaderboard(run);
+    DistributeRewards(run);
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Run completed! Instance: {}, Time: {}s, Deaths: {}",
+        run->instanceId, run->elapsedTime, run->deathCount);
+}
+
+void DungeonChallengeMgr::FailRun(ChallengeRun* run)
+{
+    if (!run)
+        return;
+
+    run->state = CHALLENGE_STATE_FAILED;
+    LOG_INFO("module", ">> mod-dungeon-challenge: Run failed for instance {}.", run->instanceId);
+}
+
+// ============================================================================
+// Affix Assignment
+// ============================================================================
+
+void DungeonChallengeMgr::AssignAffixesToCreatures(ChallengeRun* run, Map* map)
+{
+    if (!run || !map)
+        return;
+
+    std::vector<DungeonChallengeAffix> availableAffixes = GetAffixesForDifficulty(run->difficulty);
+    if (availableAffixes.empty())
+        return;
+
+    // Collect all alive non-boss creatures in the instance
+    std::vector<Creature*> candidates;
+    for (auto const& pair : map->GetCreatureBySpawnIdStore())
+    {
+        Creature* creature = pair.second;
+        if (!creature || !creature->IsAlive())
+            continue;
+        if (creature->IsPet() || creature->IsSummon() || creature->IsTotem())
+            continue;
+        // Skip bosses (rank 3 = boss)
+        if (creature->IsWorldBoss() || creature->GetCreatureTemplate()->rank >= 3)
+            continue;
+        // Skip critters and non-combat NPCs
+        if (creature->GetCreatureTemplate()->unit_class == 0)
+            continue;
+        if (creature->GetCreatureTemplate()->faction == 35) // friendly
+            continue;
+        candidates.push_back(creature);
+    }
+
+    if (candidates.empty())
+        return;
+
+    // Select ~affixPercentage% of mobs
+    uint32 affixCount = std::max(1u, (uint32)(candidates.size() * _affixPercentage / 100));
+
+    // Shuffle and pick
+    std::shuffle(candidates.begin(), candidates.end(), _rng);
+    std::uniform_int_distribution<size_t> affixDist(0, availableAffixes.size() - 1);
+
+    for (uint32 i = 0; i < affixCount && i < candidates.size(); ++i)
+    {
+        Creature* creature = candidates[i];
+        DungeonChallengeAffix affix = availableAffixes[affixDist(_rng)];
+
+        run->affixedCreatures.insert(creature->GetGUID());
+        run->creatureAffixes[creature->GetGUID()] = affix;
+
+        ApplyAffixToCreature(creature, affix, run->difficulty);
+    }
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Assigned affixes to {}/{} creatures in instance {}.",
+        affixCount, candidates.size(), run->instanceId);
+}
+
+void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChallengeAffix affix, uint32 difficulty)
+{
+    if (!creature)
+        return;
+
+    // Visual indicator: add a title/name suffix
+    AffixInfo const* info = GetAffixInfo(affix);
+
+    // Apply affix-specific buffs
+    switch (affix)
+    {
+        case AFFIX_FORTIFIED:
+        {
+            // +40% HP, +20% damage
+            float hpMult = 1.4f;
+            float dmgMult = 1.2f;
+            creature->SetMaxHealth(creature->GetMaxHealth() * hpMult);
+            creature->SetFullHealth();
+            creature->SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE,
+                creature->GetWeaponDamageRange(BASE_ATTACK, MINDAMAGE) * dmgMult);
+            creature->SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE,
+                creature->GetWeaponDamageRange(BASE_ATTACK, MAXDAMAGE) * dmgMult);
+            creature->UpdateDamagePhysical(BASE_ATTACK);
+            break;
+        }
+        case AFFIX_BOLSTERING:
+        case AFFIX_RAGING:
+        case AFFIX_SANGUINE:
+        case AFFIX_NECROTIC:
+        case AFFIX_BURSTING:
+        case AFFIX_EXPLOSIVE:
+        case AFFIX_VOLCANIC:
+        case AFFIX_STORMING:
+        case AFFIX_INSPIRING:
+            // These are handled via event hooks in the scripts
+            // Mark creature for the affix system
+            break;
+        default:
+            break;
+    }
+
+    // Scale creature stats for difficulty level
+    ScaleCreatureForDifficulty(creature, difficulty);
+
+    if (info)
+    {
+        LOG_DEBUG("module", ">> mod-dungeon-challenge: Applied affix '{}' to creature {} (entry: {})",
+            info->name, creature->GetGUID().ToString(), creature->GetEntry());
+    }
+}
+
+void DungeonChallengeMgr::ScaleCreatureForDifficulty(Creature* creature, uint32 difficulty)
+{
+    if (!creature || difficulty == 0)
+        return;
+
+    float hpMult = GetHealthMultiplier(difficulty);
+    float dmgMult = GetDamageMultiplier(difficulty);
+
+    creature->SetMaxHealth(creature->GetCreateHealth() * hpMult);
+    creature->SetFullHealth();
+
+    creature->SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE,
+        creature->GetWeaponDamageRange(BASE_ATTACK, MINDAMAGE) * dmgMult);
+    creature->SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE,
+        creature->GetWeaponDamageRange(BASE_ATTACK, MAXDAMAGE) * dmgMult);
+    creature->UpdateDamagePhysical(BASE_ATTACK);
+}
+
+// ============================================================================
+// Leaderboard
+// ============================================================================
+
+void DungeonChallengeMgr::SaveRunToLeaderboard(ChallengeRun const* run)
+{
+    if (!run || run->state != CHALLENGE_STATE_COMPLETED)
+        return;
+
+    // Build participant names
+    std::string participantStr;
+    for (auto const& guid : run->participants)
+    {
+        if (Player* player = ObjectAccessor::FindPlayer(guid))
+        {
+            if (!participantStr.empty())
+                participantStr += ",";
+            participantStr += player->GetName();
+        }
+    }
+
+    std::string leaderName;
+    if (Player* leader = ObjectAccessor::FindPlayer(run->leaderGuid))
+        leaderName = leader->GetName();
+
+    CharacterDatabase.Execute(
+        "INSERT INTO `dungeon_challenge_leaderboard` "
+        "(`map_id`, `difficulty`, `completion_time`, `death_count`, `leader_name`, `leader_guid`, "
+        "`date_completed`, `participants`) VALUES ({}, {}, {}, {}, '{}', {}, NOW(), '{}')",
+        run->mapId, run->difficulty, run->elapsedTime, run->deathCount,
+        leaderName, run->leaderGuid.GetCounter(), participantStr);
+}
+
+std::vector<LeaderboardEntry> DungeonChallengeMgr::GetLeaderboard(uint32 mapId, uint32 difficulty, uint32 limit) const
+{
+    std::vector<LeaderboardEntry> result;
+
+    auto it = _leaderboard.find(mapId);
+    if (it == _leaderboard.end())
+        return result;
+
+    uint32 count = 0;
+    for (auto const& entry : it->second)
+    {
+        if (difficulty > 0 && entry.difficulty != difficulty)
+            continue;
+        result.push_back(entry);
+        if (++count >= limit)
+            break;
+    }
+
+    return result;
+}
+
+std::vector<LeaderboardEntry> DungeonChallengeMgr::GetPlayerBestRuns(ObjectGuid playerGuid, uint32 limit) const
+{
+    std::vector<LeaderboardEntry> result;
+
+    QueryResult qr = CharacterDatabase.Query(
+        "SELECT map_id, difficulty, completion_time, death_count, leader_name, date_completed, participants "
+        "FROM dungeon_challenge_leaderboard WHERE leader_guid = {} ORDER BY completion_time ASC LIMIT {}",
+        playerGuid.GetCounter(), limit);
+
+    if (!qr)
+        return result;
+
+    do
+    {
+        Field* fields = qr->Fetch();
+        LeaderboardEntry entry;
+        entry.mapId          = fields[0].Get<uint32>();
+        entry.difficulty     = fields[1].Get<uint32>();
+        entry.completionTime = fields[2].Get<uint32>();
+        entry.deathCount     = fields[3].Get<uint32>();
+        entry.leaderName     = fields[4].Get<std::string>();
+        entry.dateCompleted  = fields[5].Get<std::string>();
+        result.push_back(entry);
+    } while (qr->NextRow());
+
+    return result;
+}
+
+// ============================================================================
+// Rewards
+// ============================================================================
+
+void DungeonChallengeMgr::DistributeRewards(ChallengeRun const* run)
+{
+    if (!run)
+        return;
+
+    bool inTime = !run->IsTimedOut();
+    uint32 goldReward = _lootBonusPerLevel * run->difficulty;
+
+    // Bonus for completing in time
+    if (inTime)
+        goldReward *= 2;
+
+    for (auto const& guid : run->participants)
+    {
+        Player* player = ObjectAccessor::FindPlayer(guid);
+        if (!player)
+            continue;
+
+        // Gold reward
+        player->ModifyMoney(goldReward);
+
+        // Announce to player
+        uint32 minutes = run->elapsedTime / 60;
+        uint32 seconds = run->elapsedTime % 60;
+
+        if (inTime)
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cff00ff00[Dungeon Challenge]|r Herausforderung abgeschlossen! "
+                "Stufe: |cffff8000{}|r | Zeit: |cff00ff00{}:{:02}|r | Tode: {} | "
+                "Belohnung: |cffffcc00{} Gold|r",
+                run->difficulty, minutes, seconds, run->deathCount, goldReward / 10000);
+        }
+        else
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Herausforderung ueber der Zeit abgeschlossen! "
+                "Stufe: |cffff8000{}|r | Zeit: |cffff0000{}:{:02}|r | Tode: {} | "
+                "Belohnung: |cffffcc00{} Gold|r",
+                run->difficulty, minutes, seconds, run->deathCount, goldReward / 10000);
+        }
+    }
+}
