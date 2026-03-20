@@ -78,34 +78,8 @@ end
 LoadDungeons()
 
 -- ============================================================================
--- Helper: Build dungeon data table for client
+-- Helper: Build config table for client (small, safe for init message)
 -- ============================================================================
-
-local function GetDungeonDataForClient()
-    local data = {}
-    for i, d in ipairs(dungeons) do
-        data[i] = {
-            mapId        = d.mapId,
-            name         = d.name,
-            timerMinutes = d.timerMinutes,
-            bossCount    = d.bossCount,
-        }
-    end
-    return data
-end
-
-local function GetAffixDataForClient()
-    local data = {}
-    for i, a in ipairs(AFFIXES) do
-        data[i] = {
-            id      = a.id,
-            name    = a.name,
-            desc    = a.desc,
-            minDiff = a.minDiff,
-        }
-    end
-    return data
-end
 
 local function GetConfigForClient()
     return {
@@ -119,18 +93,44 @@ end
 
 -- ============================================================================
 -- Send initial data to client on login
+-- Uses individual messages per dungeon/affix to avoid AIO message size limits
 -- ============================================================================
 
 AIO.AddOnInit(function(msg, player)
     if player then
-        local dData = GetDungeonDataForClient()
-        local aData = GetAffixDataForClient()
-        local cData = GetConfigForClient()
-        print("[mod-dungeon-challenge] AIO: Sending init to " .. player:GetName()
-            .. " (" .. #dData .. " dungeons, " .. #aData .. " affixes)")
-        msg:Add("DungeonChallenge", "Init", dData, aData, cData)
+        -- Send config via init message (small payload)
+        msg:Add("DungeonChallenge", "InitConfig", GetConfigForClient())
     end
     return msg
+end)
+
+-- Send dungeons and affixes individually after login via player event
+local PLAYER_EVENT_ON_LOGIN = 3
+
+RegisterPlayerEvent(PLAYER_EVENT_ON_LOGIN, function(event, player)
+    -- Small delay to ensure AIO init has completed
+    player:RegisterEvent(function(eventId, delay, repeats, pl)
+        -- Send total counts first so client knows what to expect
+        AIO.Handle(pl, "DungeonChallenge", "InitBegin", #dungeons, #AFFIXES)
+
+        -- Send each dungeon as flat parameters (no nested tables)
+        for _, d in ipairs(dungeons) do
+            AIO.Handle(pl, "DungeonChallenge", "InitDungeon",
+                d.mapId, d.name, d.timerMinutes, d.bossCount)
+        end
+
+        -- Send each affix as flat parameters
+        for _, a in ipairs(AFFIXES) do
+            AIO.Handle(pl, "DungeonChallenge", "InitAffix",
+                a.id, a.name, a.desc, a.minDiff)
+        end
+
+        -- Signal that init is complete
+        AIO.Handle(pl, "DungeonChallenge", "InitComplete")
+
+        print("[mod-dungeon-challenge] AIO: Sent init to " .. pl:GetName()
+            .. " (" .. #dungeons .. " dungeons, " .. #AFFIXES .. " affixes)")
+    end, 1, 1, 1) -- 1ms delay, 1 repeat
 end)
 
 -- ============================================================================

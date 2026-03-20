@@ -661,14 +661,42 @@ end
 
 local ClientHandlers = {}
 
--- Receive initial data on login
-ClientHandlers.Init = function(dungeons, affixes, cfg)
-    dungeonData = dungeons or {}
-    affixData = affixes or {}
+-- Receive config via AIO init message (small payload)
+ClientHandlers.InitConfig = function(cfg)
     config = cfg or {}
+end
+
+-- Begin receiving dungeon/affix data (sent individually after login)
+ClientHandlers.InitBegin = function(dungeonCount, affixCount)
+    dungeonData = {}
+    affixData = {}
+end
+
+-- Receive a single dungeon (flat parameters, no nested tables)
+ClientHandlers.InitDungeon = function(mapId, name, timerMinutes, bossCount)
+    table.insert(dungeonData, {
+        mapId        = mapId,
+        name         = name,
+        timerMinutes = timerMinutes,
+        bossCount    = bossCount,
+    })
+end
+
+-- Receive a single affix (flat parameters)
+ClientHandlers.InitAffix = function(id, name, desc, minDiff)
+    table.insert(affixData, {
+        id      = id,
+        name    = name,
+        desc    = desc,
+        minDiff = minDiff,
+    })
+end
+
+-- All init data received
+ClientHandlers.InitComplete = function()
     DEFAULT_CHAT_FRAME:AddMessage(string.format(
-        "|cff00ff00[Dungeon Challenge]|r Loaded %d dungeons from server.",
-        #dungeonData))
+        "|cff00ff00[Dungeon Challenge]|r Loaded %d dungeons, %d affixes.",
+        #dungeonData, #affixData))
 end
 
 -- Server tells us to show the UI
