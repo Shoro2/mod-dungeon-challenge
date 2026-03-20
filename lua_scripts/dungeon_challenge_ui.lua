@@ -229,20 +229,6 @@ ScrollChild:SetWidth(SCROLL_CONTENT_WIDTH)
 ScrollChild:SetHeight(1)
 ScrollFrame:SetScrollChild(ScrollChild)
 
--- Enable spell link tooltips and clicks within scroll content
-ScrollChild:SetHyperlinksEnabled(true)
-ScrollChild:SetScript("OnHyperlinkEnter", function(self, link)
-    GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-    GameTooltip:SetHyperlink(link)
-    GameTooltip:Show()
-end)
-ScrollChild:SetScript("OnHyperlinkLeave", function(self)
-    GameTooltip:Hide()
-end)
-ScrollChild:SetScript("OnHyperlinkClick", function(self, link, text, button)
-    SetItemRef(link, text, button)
-end)
-
 -- Mouse wheel scrolling
 ScrollFrame:EnableMouseWheel(true)
 ScrollFrame:SetScript("OnMouseWheel", function(self, delta)
