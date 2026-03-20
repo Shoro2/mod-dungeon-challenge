@@ -200,6 +200,7 @@ struct CreatureChallengeData : public DataMap::Base
     // position when pulled, up to 2 times with a 3-second delay each.
     bool combatTracked = false;            // has combat entry been detected?
     bool isRespawnCopy = false;            // true for spawned copies (no further respawns)
+    bool copyWasInCombat = false;          // tracks if a respawn copy has entered combat (for evade despawn)
     uint8 respawnsTriggered = 0;           // how many respawns have been triggered (max 2)
     uint32 respawnTimer = 0;               // countdown timer in ms (3000ms = 3s)
     float homeX = 0.0f;                    // original spawn position

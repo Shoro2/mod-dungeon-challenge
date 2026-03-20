@@ -288,6 +288,15 @@ public:
             }
         }
 
+        // --- RESPAWN COPY EVADE: despawn copies that leave combat ---
+        if (creatureData->isRespawnCopy && creature->IsAlive())
+        {
+            if (creature->IsInCombat())
+                creatureData->copyWasInCombat = true;
+            else if (creatureData->copyWasInCombat)
+                creature->DespawnOrUnsummon();
+        }
+
         if (!creature->IsAlive() || creatureData->affixes.empty())
             return;
 
