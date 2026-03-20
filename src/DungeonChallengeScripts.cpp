@@ -105,7 +105,7 @@ public:
         {
             run->state = CHALLENGE_STATE_PREPARING;
             // Notify group that keystone is needed
-            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
             {
                 if (Player* member = ref->GetSource())
                 {
@@ -124,7 +124,7 @@ public:
             sDungeonChallengeMgr->AssignAffixesToCreatures(run, map);
             sDungeonChallengeMgr->StartRun(run);
 
-            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
             {
                 if (Player* member = ref->GetSource())
                 {
@@ -162,7 +162,7 @@ public:
         Group* group = player->GetGroup();
         if (group)
         {
-            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
             {
                 if (Player* member = ref->GetSource())
                 {
@@ -235,15 +235,15 @@ public:
 };
 
 // ============================================================================
-// AllCreatureScript - Death Hook for Affix Processing & Non-Mythic Lock
+// PlayerScript - Creature Kill Hook for Affix Processing & Non-Mythic Lock
 // ============================================================================
 
-class DungeonChallengeCreatureDeathScript : public AllCreatureScript
+class DungeonChallengeCreatureDeathScript : public PlayerScript
 {
 public:
-    DungeonChallengeCreatureDeathScript() : AllCreatureScript("DungeonChallengeCreatureDeathScript") { }
+    DungeonChallengeCreatureDeathScript() : PlayerScript("DungeonChallengeCreatureDeathScript") { }
 
-    void OnAllCreatureJustDied(Creature* creature) override
+    void OnPlayerCreatureKill(Player* /*killer*/, Creature* creature) override
     {
         if (!sDungeonChallengeMgr->IsEnabled())
             return;
@@ -287,7 +287,7 @@ public:
             return;
 
         // Check if this was a boss (rank >= 3)
-        if (creature->GetCreatureTemplate()->rank >= 3 || creature->IsWorldBoss())
+        if (creature->GetCreatureTemplate()->rank >= 3 || creature->isWorldBoss())
         {
             run->bossesKilled++;
             bool isFinalBoss = run->AllBossesKilled();
@@ -610,7 +610,7 @@ public:
         }
 
         // Validate all group members are online and max level
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
         {
             Player* member = ref->GetSource();
             if (!member || !member->IsInWorld())
@@ -635,7 +635,7 @@ public:
             sDungeonChallengeMgr->AssignAffixesToCreatures(run, map);
 
             // Notify group about countdown
-            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
             {
                 if (Player* member = ref->GetSource())
                 {
@@ -746,7 +746,7 @@ public:
         lastAnnounce[instanceId] = remaining;
     }
 
-    void OnDestroyInstance(Map* map) override
+    void OnDestroyInstance(MapInstanced* /*mapInstanced*/, Map* map) override
     {
         if (!map || !map->IsDungeon())
             return;
