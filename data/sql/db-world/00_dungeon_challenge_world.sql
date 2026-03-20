@@ -18,6 +18,16 @@ INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`,
 (@NPC_ENTRY, 0, 20925, 1.0, 1.0);
 
 -- ============================================================================
+-- Keystone Item (Entry: 500001)
+-- ============================================================================
+
+SET @KEYSTONE_ENTRY := 500001;
+
+DELETE FROM `item_template` WHERE `entry` = @KEYSTONE_ENTRY;
+INSERT INTO `item_template` (`entry`, `class`, `subclass`, `name`, `displayid`, `Quality`, `Flags`, `BuyCount`, `BuyPrice`, `SellPrice`, `InventoryType`, `AllowableClass`, `AllowableRace`, `ItemLevel`, `RequiredLevel`, `maxcount`, `stackable`, `bonding`, `description`, `ScriptName`) VALUES
+(@KEYSTONE_ENTRY, 12, 0, 'Dungeon Challenge Schluesselstein', 6266, 4, 64, 1, 0, 0, 0, -1, -1, 80, 80, 1, 1, 1, 'Benutze diesen Schluesselstein im Dungeon um eine vorbereitete Challenge zu aktivieren.', 'dungeon_challenge_keystone');
+
+-- ============================================================================
 -- Dungeon Challenge Dungeons Table
 -- ============================================================================
 
@@ -54,3 +64,23 @@ INSERT INTO `dungeon_challenge_dungeons` (`map_id`, `name`, `entrance_x`, `entra
 (650, 'Trial of the Champion',        746.42, 661.2,   411.68, 0.0,  25, 3),
 (658, 'Pit of Saron',                 442.25, 212.55,  528.71, 0.0,  28, 3),
 (668, 'Halls of Reflection',          5239.01, 1929.89, 707.69, 0.0, 25, 2);
+
+-- ============================================================================
+-- Spell Override Table (per-spell damage tuning)
+-- ============================================================================
+
+DROP TABLE IF EXISTS `dungeon_challenge_spell_override`;
+CREATE TABLE `dungeon_challenge_spell_override` (
+    `spell_id` INT UNSIGNED NOT NULL,
+    `map_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '0 = applies to all maps',
+    `mod_pct` FLOAT NOT NULL DEFAULT -1 COMMENT 'Direct damage modifier (-1 = no override)',
+    `dot_mod_pct` FLOAT NOT NULL DEFAULT -1 COMMENT 'DoT damage modifier (-1 = no override)',
+    PRIMARY KEY (`spell_id`, `map_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Example spell overrides (uncomment and adjust as needed):
+-- Some abilities may deal too much damage when scaled, so reduce them
+-- INSERT INTO `dungeon_challenge_spell_override` (`spell_id`, `map_id`, `mod_pct`, `dot_mod_pct`) VALUES
+-- (59038, 0, 0.6, -1),    -- Blizzard damage reduced globally
+-- (52237, 574, 0.8, -1),   -- Specific spell in Utgarde Keep
+-- (59842, 632, -1, 0.5);   -- DoT in Forge of Souls reduced

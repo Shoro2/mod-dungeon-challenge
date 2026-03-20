@@ -4,9 +4,10 @@
 #include "GameTime.h"
 #include "ScriptedGossip.h"
 #include "SpellAuraEffects.h"
+#include "Item.h"
 
 // ============================================================================
-// WorldScript - Configuration Loading & Timer Updates
+// WorldScript - Configuration Loading & Startup
 // ============================================================================
 
 class DungeonChallengeWorldScript : public WorldScript
@@ -24,15 +25,8 @@ public:
         sDungeonChallengeMgr->LoadDungeonData();
         sDungeonChallengeMgr->LoadAffixData();
         sDungeonChallengeMgr->LoadLeaderboard();
-    }
-
-    void OnWorldUpdate(uint32 diff) override
-    {
-        if (!sDungeonChallengeMgr->IsEnabled())
-            return;
-
-        // Timer update handled per-instance in PlayerScript/InstanceScript
-        // This is a fallback for global state management if needed
+        sDungeonChallengeMgr->LoadSpellOverrides();
+        sDungeonChallengeMgr->LoadSnapshots();
     }
 };
 
@@ -53,6 +47,12 @@ public:
         ChatHandler(player->GetSession()).PSendSysMessage(
             "|cff00ff00[Dungeon Challenge]|r Modul aktiv! Sprich mit dem "
             "|cffff8000Dungeon Challenge NPC|r um eine Herausforderung zu starten.");
+
+        if (sDungeonChallengeMgr->IsKeystoneEnabled())
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cff00ff00[Dungeon Challenge]|r Nutze den |cffff8000Schluesselstein|r im Dungeon, um den Run zu aktivieren!");
+        }
     }
 
     void OnPlayerMapChanged(Player* player) override
@@ -80,6 +80,16 @@ public:
 
         uint32 instanceId = player->GetInstanceId();
 
+        // Check if instance is locked as non-challenge
+        if (sDungeonChallengeMgr->IsInstanceLocked(map))
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Diese Instanz ist gesperrt! "
+                "Es wurden bereits Kreaturen getoetet, bevor eine Challenge gestartet wurde.");
+            sDungeonChallengePending->RemovePending(leaderGuid);
+            return;
+        }
+
         // Create the challenge run
         ChallengeRun* run = sDungeonChallengeMgr->CreateChallengeRun(
             instanceId, pending->mapId, pending->difficulty, player);
@@ -90,29 +100,45 @@ public:
             return;
         }
 
-        // Scale all creatures and assign affixes
-        sDungeonChallengeMgr->AssignAffixesToCreatures(run, map);
-
-        // Start the run
-        sDungeonChallengeMgr->StartRun(run);
-
-        // Notify all group members
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+        // If keystone is enabled, set to countdown state (keystone must be used inside)
+        if (sDungeonChallengeMgr->IsKeystoneEnabled())
         {
-            if (Player* member = ref->GetSource())
+            run->state = CHALLENGE_STATE_PREPARING;
+            // Notify group that keystone is needed
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
             {
-                DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
-                std::string dungeonName = info ? info->name : "Unbekannt";
+                if (Player* member = ref->GetSource())
+                {
+                    DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
+                    std::string dungeonName = info ? info->name : "Unbekannt";
+                    ChatHandler(member->GetSession()).PSendSysMessage(
+                        "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Stufe |cffff8000{}|r vorbereitet! "
+                        "Benutze den |cffff8000Schluesselstein|r um den Timer zu starten!",
+                        dungeonName, run->difficulty);
+                }
+            }
+        }
+        else
+        {
+            // No keystone needed - start immediately
+            sDungeonChallengeMgr->AssignAffixesToCreatures(run, map);
+            sDungeonChallengeMgr->StartRun(run);
 
-                ChatHandler(member->GetSession()).PSendSysMessage(
-                    "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Stufe |cffff8000{}|r gestartet! "
-                    "Timer: |cffffff00{} Minuten|r | Bosse: |cff00ff00{}|r | "
-                    "~5%% der Mobs haben zufaellige Affixe!",
-                    dungeonName, run->difficulty, run->timerDuration / 60, run->totalBosses);
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+            {
+                if (Player* member = ref->GetSource())
+                {
+                    DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
+                    std::string dungeonName = info ? info->name : "Unbekannt";
+                    ChatHandler(member->GetSession()).PSendSysMessage(
+                        "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Stufe |cffff8000{}|r gestartet! "
+                        "Timer: |cffffff00{} Minuten|r | Bosse: |cff00ff00{}|r | "
+                        "~5%% der Mobs haben zufaellige Affixe!",
+                        dungeonName, run->difficulty, run->timerDuration / 60, run->totalBosses);
+                }
             }
         }
 
-        // Remove pending challenge
         sDungeonChallengePending->RemovePending(leaderGuid);
     }
 
@@ -130,9 +156,7 @@ public:
             return;
 
         run->deathCount++;
-
-        // Add time penalty: +5 seconds per death
-        run->timerDuration = std::max(0u, run->timerDuration - 5);
+        run->penaltyTime += sDungeonChallengeMgr->GetDeathPenalty();
 
         // Notify group
         Group* group = player->GetGroup();
@@ -144,45 +168,25 @@ public:
                 {
                     ChatHandler(member->GetSession()).PSendSysMessage(
                         "|cffff0000[Dungeon Challenge]|r |cff69ccf0{}|r ist gestorben! "
-                        "(Tode: {}, -5s Timer-Strafe)",
-                        player->GetName(), run->deathCount);
+                        "(Tode: {}, +{}s Zeitstrafe, Gesamt-Strafe: {}s)",
+                        player->GetName(), run->deathCount,
+                        sDungeonChallengeMgr->GetDeathPenalty(), run->penaltyTime);
                 }
             }
-        }
-
-        // Check if all players are dead -> fail
-        bool allDead = true;
-        if (group)
-        {
-            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
-            {
-                if (Player* member = ref->GetSource())
-                {
-                    if (member->IsAlive() && member->GetMap() == map)
-                    {
-                        allDead = false;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (allDead)
-        {
-            // Don't fail immediately - give resurrection chance
-            // Will fail when all leave the instance
         }
     }
 };
 
 // ============================================================================
-// CreatureScript - Affix Behavior Hooks
+// AllCreatureScript - Creature Processing & Affix Behavior
 // ============================================================================
 
 class DungeonChallengeCreatureScript : public AllCreatureScript
 {
 public:
     DungeonChallengeCreatureScript() : AllCreatureScript("DungeonChallengeCreatureScript") { }
+
+    static constexpr uint32 SPELL_ENRAGE_VISUAL = 8599;
 
     void OnAllCreatureUpdate(Creature* creature, uint32 diff) override
     {
@@ -193,61 +197,45 @@ public:
         if (!map || !map->IsDungeon())
             return;
 
+        // Process unprocessed creatures via DataMap
+        auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+        if (!creatureData->processed)
+        {
+            sDungeonChallengeMgr->ProcessCreature(creature, map);
+        }
+
         ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(map->GetInstanceId());
         if (!run || run->state != CHALLENGE_STATE_RUNNING)
             return;
 
-        // Update timer
-        sDungeonChallengeMgr->UpdateRun(run, diff);
-
         // Handle RAGING affix: enrage below 30% HP
-        auto affixIt = run->creatureAffixes.find(creature->GetGUID());
-        if (affixIt != run->creatureAffixes.end())
+        if (creatureData->affix == AFFIX_RAGING && creature->IsAlive() && !creatureData->hasEnraged)
         {
-            if (affixIt->second == AFFIX_RAGING && creature->IsAlive())
+            if (creature->GetHealthPct() < 30.0f)
             {
-                bool isLowHp = creature->GetHealthPct() < 30.0f;
-                bool hasEnrage = creature->HasAura(SPELL_ENRAGE_VISUAL);
+                creatureData->hasEnraged = true;
+                creatureData->extraDamageMultiplier *= 1.5f;
 
-                if (isLowHp && !hasEnrage)
+                creature->AddAura(SPELL_ENRAGE_VISUAL, creature);
+
+                // Announce
+                Map::PlayerList const& players = map->GetPlayers();
+                for (auto const& ref : players)
                 {
-                    // Apply visual enrage
-                    creature->AddAura(SPELL_ENRAGE_VISUAL, creature);
-
-                    // Boost damage by 50%
-                    float baseDmgMin = creature->GetWeaponDamageRange(BASE_ATTACK, MINDAMAGE);
-                    float baseDmgMax = creature->GetWeaponDamageRange(BASE_ATTACK, MAXDAMAGE);
-                    creature->SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE, baseDmgMin * 1.5f);
-                    creature->SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE, baseDmgMax * 1.5f);
-                    creature->UpdateDamagePhysical(BASE_ATTACK);
-
-                    // Announce
-                    Map::PlayerList const& players = map->GetPlayers();
-                    for (auto const& ref : players)
+                    if (Player* player = ref.GetSource())
                     {
-                        if (Player* player = ref.GetSource())
-                        {
-                            ChatHandler(player->GetSession()).PSendSysMessage(
-                                "|cffff8000[Affix: Raging]|r |cffff0000{}|r wird wuetend! (+50%% Schaden)",
-                                creature->GetName());
-                        }
+                        ChatHandler(player->GetSession()).PSendSysMessage(
+                            "|cffff8000[Affix: Raging]|r |cffff0000{}|r wird wuetend! (+50%% Schaden)",
+                            creature->GetName());
                     }
                 }
             }
         }
     }
-
-    // Spell IDs used for visual effects
-    static constexpr uint32 SPELL_ENRAGE_VISUAL = 8599; // Enrage (visual)
-
-    void OnCreatureKill(Creature* killer, Player* /*victim*/) override
-    {
-        // Handled in PlayerScript::OnPlayerJustDied
-    }
 };
 
 // ============================================================================
-// AllCreatureScript - Death Hook for Affix Processing
+// AllCreatureScript - Death Hook for Affix Processing & Non-Mythic Lock
 // ============================================================================
 
 class DungeonChallengeCreatureDeathScript : public AllCreatureScript
@@ -264,14 +252,45 @@ public:
         if (!map || !map->IsDungeon())
             return;
 
+        // Check if this dungeon is capable of challenges
+        if (!sDungeonChallengeMgr->IsDungeonCapable(map->GetId()))
+            return;
+
         ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(map->GetInstanceId());
-        if (!run || run->state != CHALLENGE_STATE_RUNNING)
+
+        // NON-MYTHIC LOCK: If a creature dies and there's no active challenge,
+        // permanently lock this instance to prevent later challenge activation
+        if (!run || run->state == CHALLENGE_STATE_PREPARING)
+        {
+            // Skip friendly/critter mobs
+            if (creature->GetCreatureTemplate()->faction != 35 &&
+                creature->GetCreatureTemplate()->unit_class != 0 &&
+                !creature->IsPet() && !creature->IsSummon())
+            {
+                sDungeonChallengeMgr->LockInstanceAsNonChallenge(map);
+
+                Map::PlayerList const& players = map->GetPlayers();
+                for (auto const& ref : players)
+                {
+                    if (Player* player = ref.GetSource())
+                    {
+                        ChatHandler(player->GetSession()).PSendSysMessage(
+                            "|cffff0000[Dungeon Challenge]|r Kreatur getoetet ohne aktive Challenge! "
+                            "Diese Instanz kann nicht mehr fuer eine Challenge verwendet werden.");
+                    }
+                }
+            }
+            return;
+        }
+
+        if (run->state != CHALLENGE_STATE_RUNNING)
             return;
 
         // Check if this was a boss (rank >= 3)
         if (creature->GetCreatureTemplate()->rank >= 3 || creature->IsWorldBoss())
         {
             run->bossesKilled++;
+            bool isFinalBoss = run->AllBossesKilled();
 
             DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
             std::string bossName = creature->GetName();
@@ -287,19 +306,22 @@ public:
                 }
             }
 
+            // Save boss kill snapshot
+            sDungeonChallengeMgr->SaveBossKillSnapshot(run, creature, isFinalBoss, isFinalBoss && !run->IsTimedOut());
+
             // Check completion
-            if (run->AllBossesKilled())
+            if (isFinalBoss)
             {
                 sDungeonChallengeMgr->CompleteRun(run);
             }
         }
 
         // Process affix on-death effects
-        auto affixIt = run->creatureAffixes.find(creature->GetGUID());
-        if (affixIt == run->creatureAffixes.end())
-            return;
+        auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+        DungeonChallengeAffix affix = creatureData->affix;
 
-        DungeonChallengeAffix affix = affixIt->second;
+        if (affix == AFFIX_NONE)
+            return;
 
         switch (affix)
         {
@@ -320,7 +342,6 @@ public:
 private:
     void HandleBolsteringDeath(Creature* creature, ChallengeRun* run, Map* map)
     {
-        // Buff nearby allies: +20% HP and damage
         float range = 15.0f;
 
         for (auto const& pair : map->GetCreatureBySpawnIdStore())
@@ -332,16 +353,15 @@ private:
                 continue;
             if (ally->IsPet() || ally->IsSummon())
                 continue;
-            if (ally->GetCreatureTemplate()->faction == 35) // friendly
+            if (ally->GetCreatureTemplate()->faction == 35)
                 continue;
 
             ally->SetMaxHealth(ally->GetMaxHealth() * 1.2f);
             ally->SetFullHealth();
-            ally->SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE,
-                ally->GetWeaponDamageRange(BASE_ATTACK, MINDAMAGE) * 1.2f);
-            ally->SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE,
-                ally->GetWeaponDamageRange(BASE_ATTACK, MAXDAMAGE) * 1.2f);
-            ally->UpdateDamagePhysical(BASE_ATTACK);
+
+            // Increase damage multiplier via DataMap
+            auto* allyData = ally->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+            allyData->extraDamageMultiplier *= 1.2f;
         }
 
         Map::PlayerList const& players = map->GetPlayers();
@@ -357,7 +377,6 @@ private:
 
     void HandleBurstingDeath(Creature* creature, ChallengeRun* run, Map* map)
     {
-        // AoE damage to all players: 5% of max HP
         Map::PlayerList const& players = map->GetPlayers();
         for (auto const& ref : players)
         {
@@ -378,8 +397,6 @@ private:
 
     void HandleSanguineDeath(Creature* creature, ChallengeRun* run, Map* map)
     {
-        // Heal nearby mobs for 5% of their max HP per second for 8 seconds
-        // Simplified: instant heal of 20% to nearby mobs
         float range = 8.0f;
 
         for (auto const& pair : map->GetCreatureBySpawnIdStore())
@@ -409,7 +426,239 @@ private:
 };
 
 // ============================================================================
-// Timer Display Script (periodic announcement)
+// UnitScript - Damage Modification via Hooks
+// ============================================================================
+
+class DungeonChallengeUnitScript : public UnitScript
+{
+public:
+    DungeonChallengeUnitScript() : UnitScript("DungeonChallengeUnitScript") { }
+
+    void ModifyMeleeDamage(Unit* target, Unit* attacker, uint32& damage) override
+    {
+        if (!sDungeonChallengeMgr->IsEnabled())
+            return;
+
+        // Only modify damage from creatures in challenge dungeons
+        Creature* creature = attacker ? attacker->ToCreature() : nullptr;
+        if (!creature)
+            return;
+
+        Map* map = creature->GetMap();
+        if (!map || !map->IsDungeon())
+            return;
+
+        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(map->GetInstanceId());
+        if (!run || run->state != CHALLENGE_STATE_RUNNING)
+            return;
+
+        auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+        if (creatureData->extraDamageMultiplier != 1.0f)
+        {
+            damage = static_cast<uint32>(damage * creatureData->extraDamageMultiplier);
+        }
+    }
+
+    void ModifySpellDamageTaken(Unit* target, Unit* attacker, int32& damage, SpellInfo const* spellInfo) override
+    {
+        if (!sDungeonChallengeMgr->IsEnabled())
+            return;
+
+        Creature* creature = attacker ? attacker->ToCreature() : nullptr;
+        if (!creature)
+            return;
+
+        Map* map = creature->GetMap();
+        if (!map || !map->IsDungeon())
+            return;
+
+        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(map->GetInstanceId());
+        if (!run || run->state != CHALLENGE_STATE_RUNNING)
+            return;
+
+        auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+
+        // Check for spell-specific override first
+        if (spellInfo)
+        {
+            SpellOverrideEntry const* override = sDungeonChallengeMgr->GetSpellOverride(spellInfo->Id, map->GetId());
+            if (override && override->modPct >= 0.0f)
+            {
+                damage = static_cast<int32>(damage * override->modPct);
+                return;
+            }
+        }
+
+        // Apply general creature damage multiplier
+        if (creatureData->extraDamageMultiplier != 1.0f)
+        {
+            damage = static_cast<int32>(damage * creatureData->extraDamageMultiplier);
+        }
+    }
+
+    void ModifyPeriodicDamageAurasTick(Unit* target, Unit* attacker, uint32& damage, SpellInfo const* spellInfo) override
+    {
+        if (!sDungeonChallengeMgr->IsEnabled())
+            return;
+
+        Creature* creature = attacker ? attacker->ToCreature() : nullptr;
+        if (!creature)
+            return;
+
+        Map* map = creature->GetMap();
+        if (!map || !map->IsDungeon())
+            return;
+
+        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(map->GetInstanceId());
+        if (!run || run->state != CHALLENGE_STATE_RUNNING)
+            return;
+
+        auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+
+        // Check for spell-specific DoT override
+        if (spellInfo)
+        {
+            SpellOverrideEntry const* override = sDungeonChallengeMgr->GetSpellOverride(spellInfo->Id, map->GetId());
+            if (override && override->dotModPct >= 0.0f)
+            {
+                damage = static_cast<uint32>(damage * override->dotModPct);
+                return;
+            }
+        }
+
+        // Apply general creature damage multiplier
+        if (creatureData->extraDamageMultiplier != 1.0f)
+        {
+            damage = static_cast<uint32>(damage * creatureData->extraDamageMultiplier);
+        }
+    }
+};
+
+// ============================================================================
+// ItemScript - Keystone Item for Run Activation
+// ============================================================================
+
+class DungeonChallengeKeystoneScript : public ItemScript
+{
+public:
+    DungeonChallengeKeystoneScript() : ItemScript("dungeon_challenge_keystone") { }
+
+    bool OnUse(Player* player, Item* /*item*/, SpellCastTargets const& /*targets*/) override
+    {
+        if (!sDungeonChallengeMgr->IsEnabled() || !sDungeonChallengeMgr->IsKeystoneEnabled())
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Schluesselsteine sind derzeit deaktiviert.");
+            return true;
+        }
+
+        Map* map = player->GetMap();
+        if (!map || !map->IsDungeon())
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Du musst dich in einem Dungeon befinden!");
+            return true;
+        }
+
+        // Check if dungeon supports challenges
+        if (!sDungeonChallengeMgr->IsDungeonCapable(map->GetId()))
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Dieser Dungeon unterstuetzt keine Challenges!");
+            return true;
+        }
+
+        // Check if instance is locked
+        if (sDungeonChallengeMgr->IsInstanceLocked(map))
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Diese Instanz ist gesperrt! Kreaturen wurden bereits getoetet.");
+            return true;
+        }
+
+        // Must be group leader
+        Group* group = player->GetGroup();
+        if (!group)
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Du musst in einer Gruppe sein!");
+            return true;
+        }
+
+        if (group->GetLeaderGUID() != player->GetGUID())
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Nur der Gruppenleiter kann den Schluesselstein benutzen!");
+            return true;
+        }
+
+        // Check for existing run
+        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(map->GetInstanceId());
+        if (run && run->state == CHALLENGE_STATE_RUNNING)
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Es laeuft bereits eine Challenge in dieser Instanz!");
+            return true;
+        }
+
+        // Player must not be in combat
+        if (player->IsInCombat())
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Du darfst nicht im Kampf sein!");
+            return true;
+        }
+
+        // Validate all group members are online and max level
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || !member->IsInWorld())
+            {
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "|cffff0000[Dungeon Challenge]|r Alle Gruppenmitglieder muessen online sein!");
+                return true;
+            }
+        }
+
+        // If run exists in PREPARING state, activate it
+        if (run && run->state == CHALLENGE_STATE_PREPARING)
+        {
+            // Start countdown
+            run->state = CHALLENGE_STATE_COUNTDOWN;
+            run->countdownTimer = KEYSTONE_START_DELAY;
+
+            auto* mapData = map->CustomData.GetDefault<MapChallengeData>("mod-dungeon-challenge");
+            mapData->keystoneUsed = true;
+
+            // Assign affixes now
+            sDungeonChallengeMgr->AssignAffixesToCreatures(run, map);
+
+            // Notify group about countdown
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+            {
+                if (Player* member = ref->GetSource())
+                {
+                    ChatHandler(member->GetSession()).PSendSysMessage(
+                        "|cff00ff00[Dungeon Challenge]|r Schluesselstein aktiviert! "
+                        "Die Challenge startet in |cffff8000{} Sekunden|r!",
+                        KEYSTONE_START_DELAY);
+                }
+            }
+        }
+        else
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Keine vorbereitete Challenge gefunden. "
+                "Sprich zuerst mit dem |cffff8000Dungeon Challenge NPC|r!");
+        }
+
+        return true;
+    }
+};
+
+// ============================================================================
+// Timer & Countdown Script (AllMapScript)
 // ============================================================================
 
 class DungeonChallengeTimerScript : public AllMapScript
@@ -417,7 +666,7 @@ class DungeonChallengeTimerScript : public AllMapScript
 public:
     DungeonChallengeTimerScript() : AllMapScript("DungeonChallengeTimerScript") { }
 
-    void OnMapUpdate(Map* map, uint32 /*diff*/) override
+    void OnMapUpdate(Map* map, uint32 diff) override
     {
         if (!sDungeonChallengeMgr->IsEnabled())
             return;
@@ -426,34 +675,43 @@ public:
             return;
 
         ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(map->GetInstanceId());
-        if (!run || run->state != CHALLENGE_STATE_RUNNING)
+        if (!run)
+            return;
+
+        // Handle keystone countdown
+        if (run->state == CHALLENGE_STATE_COUNTDOWN)
+        {
+            HandleCountdown(run, map, diff);
+            return;
+        }
+
+        if (run->state != CHALLENGE_STATE_RUNNING)
             return;
 
         // Update elapsed time
-        sDungeonChallengeMgr->UpdateRun(run, 0);
+        sDungeonChallengeMgr->UpdateRun(run, diff);
 
-        // Periodic timer announcements (every 60 seconds, and at 30s, 10s, 5s marks)
+        // Periodic timer announcements
+        uint32 effectiveElapsed = run->GetEffectiveElapsed();
+        uint32 remaining = run->timerDuration > effectiveElapsed ?
+            run->timerDuration - effectiveElapsed : 0;
+
         static std::unordered_map<uint32, uint32> lastAnnounce;
         uint32 instanceId = map->GetInstanceId();
-        uint32 remaining = run->timerDuration > run->elapsedTime ?
-            run->timerDuration - run->elapsedTime : 0;
-
         uint32 lastTime = lastAnnounce[instanceId];
         bool shouldAnnounce = false;
 
-        // Announce at specific remaining time milestones
         if (remaining <= 10 && lastTime > 10)
             shouldAnnounce = true;
         else if (remaining <= 30 && lastTime > 30)
             shouldAnnounce = true;
         else if (remaining <= 60 && lastTime > 60)
             shouldAnnounce = true;
-        else if (remaining <= 300 && lastTime > 300) // 5 minutes
+        else if (remaining <= 300 && lastTime > 300)
             shouldAnnounce = true;
         else if (lastTime > 0 && (lastTime / 60 != remaining / 60) && remaining % 60 == 0)
-            shouldAnnounce = true; // Every minute change
+            shouldAnnounce = true;
 
-        // Also announce when time runs out
         if (remaining == 0 && lastTime > 0)
         {
             Map::PlayerList const& players = map->GetPlayers();
@@ -477,14 +735,80 @@ public:
                 if (Player* player = ref.GetSource())
                 {
                     ChatHandler(player->GetSession()).PSendSysMessage(
-                        "|cff00ff00[Dungeon Challenge]|r Verbleibende Zeit: {}{}:{:02}|r | Bosse: {}/{} | Tode: {}",
+                        "|cff00ff00[Dungeon Challenge]|r Verbleibende Zeit: {}{}:{:02}|r "
+                        "(Strafe: +{}s) | Bosse: {}/{} | Tode: {}",
                         color, remaining / 60, remaining % 60,
-                        run->bossesKilled, run->totalBosses, run->deathCount);
+                        run->penaltyTime, run->bossesKilled, run->totalBosses, run->deathCount);
                 }
             }
         }
 
         lastAnnounce[instanceId] = remaining;
+    }
+
+    void OnDestroyInstance(Map* map) override
+    {
+        if (!map || !map->IsDungeon())
+            return;
+
+        // Clean up challenge run when instance is destroyed
+        sDungeonChallengeMgr->RemoveChallengeRun(map->GetInstanceId());
+    }
+
+private:
+    void HandleCountdown(ChallengeRun* run, Map* map, uint32 diff)
+    {
+        // Track countdown in milliseconds
+        static std::unordered_map<uint32, uint32> countdownMs;
+        uint32 instanceId = map->GetInstanceId();
+
+        countdownMs[instanceId] += diff;
+
+        if (countdownMs[instanceId] >= 1000)
+        {
+            countdownMs[instanceId] -= 1000;
+
+            if (run->countdownTimer > 0)
+            {
+                // Announce countdown at key moments
+                if (run->countdownTimer <= 5 || run->countdownTimer == 10)
+                {
+                    Map::PlayerList const& players = map->GetPlayers();
+                    for (auto const& ref : players)
+                    {
+                        if (Player* player = ref.GetSource())
+                        {
+                            ChatHandler(player->GetSession()).PSendSysMessage(
+                                "|cff00ff00[Dungeon Challenge]|r Challenge startet in |cffff8000{}|r...",
+                                run->countdownTimer);
+                        }
+                    }
+                }
+
+                run->countdownTimer--;
+            }
+            else
+            {
+                // Countdown finished - start the run!
+                sDungeonChallengeMgr->StartRun(run);
+                countdownMs.erase(instanceId);
+
+                Map::PlayerList const& players = map->GetPlayers();
+                for (auto const& ref : players)
+                {
+                    if (Player* player = ref.GetSource())
+                    {
+                        DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
+                        std::string dungeonName = info ? info->name : "Unbekannt";
+                        ChatHandler(player->GetSession()).PSendSysMessage(
+                            "|cff00ff00[Dungeon Challenge]|r |cffff8000GO!|r "
+                            "|cffff8000{}|r Stufe |cffff8000{}|r - Timer laeuft! "
+                            "({} Minuten, {} Bosse)",
+                            dungeonName, run->difficulty, run->timerDuration / 60, run->totalBosses);
+                    }
+                }
+            }
+        }
     }
 };
 
@@ -499,4 +823,6 @@ void AddSC_dungeon_challenge_scripts()
     new DungeonChallengeCreatureScript();
     new DungeonChallengeCreatureDeathScript();
     new DungeonChallengeTimerScript();
+    new DungeonChallengeUnitScript();
+    new DungeonChallengeKeystoneScript();
 }
