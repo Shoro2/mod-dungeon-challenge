@@ -233,6 +233,61 @@ public:
         if (!run || run->state != CHALLENGE_STATE_RUNNING)
             return;
 
+        // --- MOB RESPAWN: non-boss, non-affix mobs respawn at original position when pulled ---
+        if (creature->IsAlive() && creature->IsInCombat()
+            && !creatureData->isRespawnCopy
+            && !creatureData->combatTracked
+            && creatureData->affixes.empty())
+        {
+            // Skip bosses
+            bool isBoss = creature->GetCreatureTemplate()->rank >= 3 || creature->isWorldBoss();
+            if (!isBoss)
+            {
+                creatureData->combatTracked = true;
+                creature->GetHomePosition(creatureData->homeX, creatureData->homeY,
+                                          creatureData->homeZ, creatureData->homeO);
+                creatureData->respawnTimer = 3000;
+            }
+        }
+
+        // Handle respawn timer countdown and spawning
+        if (creatureData->combatTracked && creatureData->respawnsTriggered < 2 && creatureData->respawnTimer > 0)
+        {
+            if (creatureData->respawnTimer <= diff)
+            {
+                creatureData->respawnTimer = 0;
+
+                Creature* copy = creature->SummonCreature(creature->GetEntry(),
+                    creatureData->homeX, creatureData->homeY, creatureData->homeZ, creatureData->homeO,
+                    TEMPSUMMON_CORPSE_TIMED_DESPAWN, 60000);
+                if (copy)
+                {
+                    auto* copyData = copy->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+                    copyData->isRespawnCopy = true;
+                    copyData->processed = true;
+                    copyData->noLoot = true;
+
+                    // Apply difficulty scaling
+                    if (run)
+                    {
+                        sDungeonChallengeMgr->ScaleCreatureForDifficulty(copy, run->difficulty);
+                    }
+
+                    // Attack the player who pulled the original mob
+                    if (Unit* victim = creature->GetVictim())
+                        copy->AI()->AttackStart(victim);
+                }
+
+                creatureData->respawnsTriggered++;
+                if (creatureData->respawnsTriggered < 2)
+                    creatureData->respawnTimer = 3000; // schedule next respawn
+            }
+            else
+            {
+                creatureData->respawnTimer -= diff;
+            }
+        }
+
         if (!creature->IsAlive() || creatureData->affixes.empty())
             return;
 
