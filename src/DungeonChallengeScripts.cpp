@@ -544,7 +544,7 @@ public:
                 if (Player* playerTarget = target->ToPlayer())
                 {
                     playerTarget->EnvironmentalDamage(DAMAGE_FIRE, 666);
-                    creature->CastSpell(playerTarget, SPELL_AFFIX_HELL_TOUCHED_DEBUFF, true);
+                    playerTarget->CastSpell(playerTarget, SPELL_AFFIX_HELL_TOUCHED_DEBUFF, true);
                 }
             }
         }
@@ -598,7 +598,7 @@ public:
                 if (Player* playerTarget = target->ToPlayer())
                 {
                     playerTarget->EnvironmentalDamage(DAMAGE_FIRE, 666);
-                    creature->CastSpell(playerTarget, SPELL_AFFIX_HELL_TOUCHED_DEBUFF, true);
+                    playerTarget->CastSpell(playerTarget, SPELL_AFFIX_HELL_TOUCHED_DEBUFF, true);
                 }
             }
         }
