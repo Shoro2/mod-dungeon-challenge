@@ -1,54 +1,55 @@
 # mod-dungeon-challenge
 
-Ein **Mythic+ inspiriertes Dungeon-Challenge-System** für AzerothCore (WoW 3.3.5a WotLK).
+A **Mythic+ inspired dungeon challenge system** for AzerothCore (WoW 3.3.5a WotLK).
 
 ## Features
 
-- **Schwierigkeitsstufen 1-20**: Skaliert Mob-HP und -Schaden progressiv
-- **Timer-System**: Jeder Dungeon hat einen individuellen Timer mit Zeitdruck
-- **Zufällige Affixe**: ~5% aller Mobs im Dungeon erhalten spezielle Fähigkeiten
-- **10 verschiedene Affixe**: Bolstering, Raging, Sanguine, Necrotic, Bursting, Explosive, Fortified, Volcanic, Storming, Inspiring
-- **Bestenliste**: Globale Rangliste pro Dungeon und Schwierigkeitsstufe
-- **Gold-Belohnungen**: Skaliert mit Schwierigkeit, Bonus für In-Time-Completions
-- **Tod-Strafe**: Jeder Tod kostet 5 Sekunden Timer
-- **NPC-basierte UI**: Kein Addon benötigt — alles über Gossip-Menüs
+- **Difficulty Levels 1-20**: Progressively scales mob HP and damage
+- **Timer System**: Each dungeon has an individual timer with time pressure
+- **Random Affixes**: ~5% of all mobs in the dungeon receive special abilities
+- **10 Different Affixes**: Bolstering, Raging, Sanguine, Necrotic, Bursting, Explosive, Fortified, Volcanic, Storming, Inspiring
+- **Leaderboard**: Global ranking per dungeon and difficulty level
+- **Gold Rewards**: Scales with difficulty, bonus for in-time completions
+- **Death Penalty**: Each death costs time (configurable, default 15 seconds)
+- **Keystone System**: Requires keystone item activation inside the dungeon
+- **NPC-Based UI**: No addon required — everything via gossip menus
 
-## Unterstützte Dungeons
+## Supported Dungeons
 
 | Dungeon | Timer |
 |---------|-------|
-| Utgarde Keep | 25 Min |
-| Utgarde Pinnacle | 28 Min |
-| The Nexus | 28 Min |
-| The Oculus | 35 Min |
-| Culling of Stratholme | 30 Min |
-| Halls of Stone | 28 Min |
-| Drak'Tharon Keep | 25 Min |
-| Azjol-Nerub | 20 Min |
-| Halls of Lightning | 28 Min |
-| Gundrak | 28 Min |
-| Violet Hold | 25 Min |
-| Ahn'kahet: The Old Kingdom | 30 Min |
-| The Forge of Souls | 22 Min |
-| Trial of the Champion | 25 Min |
-| Pit of Saron | 28 Min |
-| Halls of Reflection | 25 Min |
+| Utgarde Keep | 25 min |
+| Utgarde Pinnacle | 28 min |
+| The Nexus | 28 min |
+| The Oculus | 35 min |
+| Culling of Stratholme | 30 min |
+| Halls of Stone | 28 min |
+| Drak'Tharon Keep | 25 min |
+| Azjol-Nerub | 20 min |
+| Halls of Lightning | 28 min |
+| Gundrak | 28 min |
+| Violet Hold | 25 min |
+| Ahn'kahet: The Old Kingdom | 30 min |
+| The Forge of Souls | 22 min |
+| Trial of the Champion | 25 min |
+| Pit of Saron | 28 min |
+| Halls of Reflection | 25 min |
 
 ## Installation
 
-### 1. Modul in AzerothCore einbinden
+### 1. Add Module to AzerothCore
 
 ```bash
 cd azerothcore-wotlk/modules/
 git clone https://github.com/Shoro2/mod-dungeon-challenge.git
 ```
 
-Oder als Symlink:
+Or as symlink:
 ```bash
-ln -s /pfad/zu/mod-dungeon-challenge azerothcore-wotlk/modules/mod-dungeon-challenge
+ln -s /path/to/mod-dungeon-challenge azerothcore-wotlk/modules/mod-dungeon-challenge
 ```
 
-### 2. Server neu kompilieren
+### 2. Recompile the Server
 
 ```bash
 cd azerothcore-wotlk/build
@@ -59,98 +60,101 @@ make -j$(nproc)
 make install
 ```
 
-### 3. Datenbank-Tabellen erstellen
+### 3. Create Database Tables
 
-Die SQL-Dateien werden beim ersten Start automatisch ausgeführt, wenn `include.sh` korrekt konfiguriert ist.
+SQL files are automatically executed on first startup if `include.sh` is correctly configured.
 
-**Manuell:**
+**Manual setup:**
 
 ```bash
-# World-Datenbank
+# World database
 mysql -u root acore_world < modules/mod-dungeon-challenge/data/sql/db-world/00_dungeon_challenge_world.sql
 
-# Characters-Datenbank
+# Characters database
 mysql -u root acore_characters < modules/mod-dungeon-challenge/data/sql/db-characters/00_dungeon_challenge_characters.sql
 ```
 
-### 4. Konfiguration anpassen
+### 4. Adjust Configuration
 
-Kopiere die Konfigurationsdatei:
+Copy the configuration file:
 ```bash
 cp modules/mod-dungeon-challenge/conf/mod_dungeon_challenge.conf.dist etc/mod_dungeon_challenge.conf
 ```
 
-Passe die Werte in `mod_dungeon_challenge.conf` nach Bedarf an (siehe Konfiguration unten).
+Adjust the values in `mod_dungeon_challenge.conf` as needed (see Configuration below).
 
-### 5. Server starten
+### 5. Start the Server
 
 ```bash
 ./worldserver
 ```
 
-Beim Start sollte erscheinen:
+On startup you should see:
 ```
 >> mod-dungeon-challenge: Configuration loaded (Enabled: Yes, MaxDifficulty: 20, AffixPct: 5%)
 >> mod-dungeon-challenge: Loaded 16 default dungeons.
 >> mod-dungeon-challenge: Loaded 10 affixes.
 ```
 
-## Ingame-Anleitung
+## In-Game Guide
 
-### NPC spawnen
+### Spawn the NPC
 
-Der Challenge-NPC hat die Entry-ID **500000**. Spawne ihn in einer Hauptstadt:
+The Challenge NPC has entry ID **500000**. Spawn it in a capital city:
 
 ```
 .npc add 500000
 ```
 
-### Challenge starten
+### Starting a Challenge
 
-1. **Gruppe bilden** (2-5 Spieler)
-2. **NPC ansprechen** → Hauptmenü öffnet sich
-3. **"Dungeon Challenge starten"** wählen
-4. **Dungeon auswählen** aus der Liste
-5. **Schwierigkeitsstufe wählen** (1-20)
-   - Grün (1-5): Einstieg
-   - Gelb (6-10): Mittel
-   - Orange (11-15): Schwer
-   - Rot (16-20): Extrem
-6. **Bestätigen** → Gruppe wird in den Dungeon teleportiert
-7. **Timer startet** → Alle Bosse vor Ablauf besiegen!
+1. **Form a group** (2-5 players)
+2. **Talk to the NPC** → Main menu opens
+3. **Select "Start Dungeon Challenge"**
+4. **Choose a dungeon** from the list
+5. **Choose a difficulty level** (1-20)
+   - Green (1-5): Entry level
+   - Yellow (6-10): Medium
+   - Orange (11-15): Hard
+   - Red (16-20): Extreme
+6. **Confirm** → Group is teleported into the dungeon
+7. **Use the Keystone** → 10-second countdown → Timer starts → Defeat all bosses before time runs out!
 
-### Während des Runs
+### During the Run
 
-- **Timer**: Verbleibende Zeit wird periodisch im Chat angezeigt
-- **Boss-Kills**: Fortschritt wird nach jedem Boss-Kill angezeigt
-- **Tode**: Jeder Tod kostet 5 Sekunden und wird angekündigt
-- **Affixe**: ~5% der Mobs haben spezielle Fähigkeiten (im Chat markiert)
-- **Abbrechen**: Über den NPC oder Gruppenleiter kann der Run abgebrochen werden
+- **Timer**: Remaining time is periodically displayed in chat
+- **Boss Kills**: Progress is shown after each boss kill
+- **Deaths**: Each death adds a time penalty and is announced
+- **Affixes**: ~5% of mobs have special abilities (marked in chat)
+- **Cancel**: The run can be abandoned via the NPC or by the group leader
 
-### Bestenliste
+### Leaderboard
 
-Über den NPC:
-- **"Bestenliste"** → Dungeon auswählen → Top 10 Runs
-- **"Meine besten Runs"** → Persönliche Bestleistungen
+Via the NPC:
+- **"Leaderboard"** → Select dungeon → Top 10 runs
+- **"My Best Runs"** → Personal best scores
 
-## Konfiguration
+## Configuration
 
-| Einstellung | Standard | Beschreibung |
-|-------------|----------|--------------|
-| `DungeonChallenge.Enable` | 1 | Modul aktivieren/deaktivieren |
-| `DungeonChallenge.AffixPercentage` | 5 | % der Mobs mit zufälligen Affixen |
-| `DungeonChallenge.MaxDifficulty` | 20 | Höchste wählbare Stufe |
-| `DungeonChallenge.HealthMultiplierPerLevel` | 15 | HP-Bonus pro Stufe in % |
-| `DungeonChallenge.DamageMultiplierPerLevel` | 8 | Schaden-Bonus pro Stufe in % |
-| `DungeonChallenge.TimerBaseMinutes` | 30 | Fallback-Timer wenn kein Dungeon-spezifischer Timer |
-| `DungeonChallenge.LootBonusPerLevel` | 50000 | Gold pro Stufe in Copper (50000 = 5 Gold) |
-| `DungeonChallenge.NpcEntry` | 500000 | Creature Entry-ID des NPCs |
-| `DungeonChallenge.AnnounceOnLogin` | 1 | Begrüßungsnachricht beim Login |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `DungeonChallenge.Enable` | 1 | Enable/disable the module |
+| `DungeonChallenge.AffixPercentage` | 5 | % of mobs with random affixes |
+| `DungeonChallenge.MaxDifficulty` | 20 | Highest selectable level |
+| `DungeonChallenge.HealthMultiplierPerLevel` | 15 | HP bonus per level in % |
+| `DungeonChallenge.DamageMultiplierPerLevel` | 8 | Damage bonus per level in % |
+| `DungeonChallenge.TimerBaseMinutes` | 30 | Fallback timer if no dungeon-specific timer |
+| `DungeonChallenge.LootBonusPerLevel` | 50000 | Gold per level in copper (50000 = 5 gold) |
+| `DungeonChallenge.NpcEntry` | 500000 | Creature entry ID of the NPC |
+| `DungeonChallenge.AnnounceOnLogin` | 1 | Welcome message on login |
+| `DungeonChallenge.DeathPenaltySeconds` | 15 | Time penalty per death in seconds |
+| `DungeonChallenge.KeystoneEnabled` | 1 | Enable keystone item system |
+| `DungeonChallenge.KeystoneBuyCooldownMinutes` | 1440 | Keystone purchase cooldown (minutes) |
 
-## Schwierigkeitsskalierung
+## Difficulty Scaling
 
-| Stufe | HP-Multiplikator | DMG-Multiplikator | Aktive Affixe |
-|-------|-----------------|-------------------|---------------|
+| Level | HP Multiplier | DMG Multiplier | Active Affixes |
+|-------|--------------|----------------|----------------|
 | 1 | 1.15x | 1.08x | 0 |
 | 2 | 1.30x | 1.16x | 3 (Bolstering, Raging, Fortified) |
 | 5 | 1.75x | 1.40x | 3 |
@@ -160,53 +164,53 @@ Der Challenge-NPC hat die Entry-ID **500000**. Spawne ihn in einer Hauptstadt:
 | 15 | 3.25x | 2.20x | 10 (+Inspiring) |
 | 20 | 4.00x | 2.60x | 10 |
 
-## Affix-Beschreibungen
+## Affix Descriptions
 
-| Affix | Effekt | Tipp |
-|-------|--------|------|
-| **Bolstering** | Mob-Tod buffet nahestehende Allies (+20% HP/DMG) | Mobs gleichzeitig töten |
-| **Raging** | Enrage unter 30% HP (+50% DMG) | Schnell fokussieren |
-| **Sanguine** | Hinterlässt Heilzone für andere Mobs | Mobs aus der Zone ziehen |
-| **Necrotic** | Stackende Heilungsreduktion | Tank muss kiten |
-| **Bursting** | AoE-Schaden bei Mob-Tod | Nicht zu viele gleichzeitig töten |
-| **Explosive** | Spawnt explosive Kugeln | Kugeln sofort zerstören |
-| **Fortified** | +40% HP, +20% DMG | Mehr Zeit für Trash einplanen |
-| **Volcanic** | Feuerzonen unter Fernkämpfern | Ständig bewegen |
-| **Storming** | Bewegliche Tornados | Ausweichen |
-| **Inspiring** | Allies immun gegen CC | Inspiring-Mob zuerst töten |
+| Affix | Effect | Tip |
+|-------|--------|-----|
+| **Bolstering** | Mob death buffs nearby allies (+20% HP/DMG) | Kill mobs simultaneously |
+| **Raging** | Enrage below 30% HP (+50% DMG) | Focus quickly |
+| **Sanguine** | Leaves healing zone for other mobs | Pull mobs out of the zone |
+| **Necrotic** | Stacking healing reduction | Tank must kite |
+| **Bursting** | AoE damage on mob death | Don't kill too many at once |
+| **Explosive** | Spawns explosive orbs | Destroy orbs immediately |
+| **Fortified** | +40% HP, +20% DMG | Plan more time for trash |
+| **Volcanic** | Fire zones under ranged players | Keep moving |
+| **Storming** | Moving tornadoes | Dodge them |
+| **Inspiring** | Allies immune to CC | Kill the inspiring mob first |
 
-## Dungeon-Timer anpassen
+## Customizing Dungeon Timers
 
-Die Timer können in der `dungeon_challenge_dungeons` Tabelle in der World-DB angepasst werden:
+Timers can be adjusted in the `dungeon_challenge_dungeons` table in the world DB:
 
 ```sql
 UPDATE `dungeon_challenge_dungeons` SET `timer_minutes` = 35 WHERE `map_id` = 574;
 ```
 
-## Eigene Dungeons hinzufügen
+## Adding Custom Dungeons
 
 ```sql
 INSERT INTO `dungeon_challenge_dungeons`
 (`map_id`, `name`, `entrance_x`, `entrance_y`, `entrance_z`, `entrance_o`, `timer_minutes`, `boss_count`)
-VALUES (999, 'Mein Custom Dungeon', 100.0, 200.0, 50.0, 0.0, 30, 4);
+VALUES (999, 'My Custom Dungeon', 100.0, 200.0, 50.0, 0.0, 30, 4);
 ```
 
-## Fehlerbehebung
+## Troubleshooting
 
-### Modul wird nicht geladen
-- Prüfe ob `modules/mod-dungeon-challenge/` existiert
-- Prüfe die Build-Ausgabe auf Compile-Fehler
-- Prüfe die Worldserver-Logs auf `mod-dungeon-challenge` Einträge
+### Module Not Loading
+- Check if `modules/mod-dungeon-challenge/` exists
+- Check the build output for compile errors
+- Check the worldserver logs for `mod-dungeon-challenge` entries
 
-### NPC zeigt kein Menü
-- Prüfe ob `creature_template` Entry 500000 existiert: `.lookup creature 500000`
-- Prüfe ob ScriptName korrekt ist: `npc_dungeon_challenge`
+### NPC Shows No Menu
+- Check if `creature_template` entry 500000 exists: `.lookup creature 500000`
+- Check if ScriptName is correct: `npc_dungeon_challenge`
 
-### Teleport funktioniert nicht
-- Prüfe die Eingangskoordinaten in `dungeon_challenge_dungeons`
-- Koordinaten mit `0,0,0` müssen manuell nachgetragen werden
-- Tipp: Gehe zum Dungeon-Eingang und nutze `.gps` für die Koordinaten
+### Teleport Not Working
+- Check the entrance coordinates in `dungeon_challenge_dungeons`
+- Coordinates with `0,0,0` must be manually added
+- Tip: Go to the dungeon entrance and use `.gps` for the coordinates
 
-## Lizenz
+## License
 
-Dieses Modul ist unter der GNU GPL v2 lizenziert, kompatibel mit AzerothCore.
+This module is licensed under GNU GPL v2, compatible with AzerothCore.
