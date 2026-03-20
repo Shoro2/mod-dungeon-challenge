@@ -325,11 +325,15 @@ function ShowDungeonPanel()
         "|cff00ff00[DC Debug]|r ShowDungeonPanel called, dungeonData count: %d",
         dungeonData and #dungeonData or -1))
 
-    local y = -8
-    AddLabel(y, "|cffFFD700Select a Dungeon:|r", "GameFontNormalLarge")
-    y = y - 24
+    -- Title
+    local title = ScrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 8, -8)
+    title:SetText("|cffFFD700Select a Dungeon:|r")
+    title:Show()
+    table.insert(contentElements, title)
 
     if not dungeonData or #dungeonData == 0 then
+        local y = -32
         AddLabel(y, "|cffff0000No dungeons available.|r")
         y = y - 18
         AddLabel(y, "|cffaaaaaaWaiting for server data... Try /reload|r")
@@ -337,23 +341,90 @@ function ShowDungeonPanel()
         return
     end
 
-    for i, d in ipairs(dungeonData) do
-        AddDivider(y - 2)
-        y = y - 8
+    -- Tile grid layout — calculate columns/rows to fit the content area
+    local count = #dungeonData
+    local CONTENT_W = SCROLL_CONTENT_WIDTH - 16  -- usable width (padding)
+    local CONTENT_H = ContentFrame:GetHeight() - 50  -- subtract title + padding
+    local TILE_PAD = 6
 
-        AddClickableText(y, "|cffffffff" .. (d.name or "Unknown") .. "|r", function()
+    -- Determine grid dimensions: try 3 columns first, then 4, then 2
+    local cols = 3
+    if count <= 4 then
+        cols = 2
+    elseif count > 12 then
+        cols = 4
+    end
+    local rows = math.ceil(count / cols)
+
+    local tileW = math.floor((CONTENT_W - (cols - 1) * TILE_PAD) / cols)
+    local tileH = math.floor((CONTENT_H - (rows - 1) * TILE_PAD) / rows)
+    -- Clamp tile height
+    if tileH > 90 then tileH = 90 end
+    if tileH < 40 then tileH = 40 end
+
+    local startY = -34
+    local startX = 8
+
+    for i, d in ipairs(dungeonData) do
+        local col = (i - 1) % cols
+        local row = math.floor((i - 1) / cols)
+
+        local x = startX + col * (tileW + TILE_PAD)
+        local y = startY - row * (tileH + TILE_PAD)
+
+        local tile = CreateFrame("Button", nil, ScrollChild)
+        tile:SetSize(tileW, tileH)
+        tile:SetPoint("TOPLEFT", x, y)
+
+        -- Background
+        local bg = tile:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetTexture(0.12, 0.12, 0.25, 0.8)
+
+        -- Border
+        tile:SetBackdrop({
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            tile = true, tileSize = 8, edgeSize = 10,
+            insets = { left = 2, right = 2, top = 2, bottom = 2 }
+        })
+        tile:SetBackdropColor(0.12, 0.12, 0.25, 0.8)
+        tile:SetBackdropBorderColor(0.4, 0.4, 0.7, 0.6)
+
+        -- Highlight
+        local hl = tile:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetTexture(0.3, 0.3, 0.6, 0.3)
+
+        -- Dungeon name
+        local nameText = tile:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        nameText:SetPoint("TOP", 0, -8)
+        nameText:SetWidth(tileW - 10)
+        nameText:SetText("|cffffffff" .. (d.name or "Unknown") .. "|r")
+
+        -- Info line
+        local infoText = tile:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        infoText:SetPoint("BOTTOM", 0, 8)
+        infoText:SetText(string.format("|cffaaaaaa%d bosses | %d min|r",
+            d.bossCount or 0, d.timerMinutes or 30))
+
+        tile:SetScript("OnClick", function()
             selectedDungeon = i
             ShowDifficultyPanel()
         end)
-        y = y - 22
+        tile:SetScript("OnEnter", function(self)
+            self:SetBackdropBorderColor(1.0, 0.82, 0.0, 1.0)
+        end)
+        tile:SetScript("OnLeave", function(self)
+            self:SetBackdropBorderColor(0.4, 0.4, 0.7, 0.6)
+        end)
 
-        AddLabel(y, string.format(
-            "    |cffaaaaaa Timer: %d min  |  Bosses: %d|r",
-            d.timerMinutes or 30, d.bossCount or 0), "GameFontHighlightSmall")
-        y = y - 20
+        tile:Show()
+        table.insert(contentElements, tile)
     end
 
-    ScrollChild:SetHeight(math.abs(y) + 10)
+    local totalRows = math.ceil(count / cols)
+    ScrollChild:SetHeight(math.abs(startY) + totalRows * (tileH + TILE_PAD) + 10)
 end
 
 -- ============================================================================
@@ -514,17 +585,16 @@ function ShowDifficultyPanel()
     table.insert(contentElements, affixDetailLabel)
     y = y - 40
 
-    -- Confirm button
-    local confirmBtn = CreateFrame("Button", nil, ScrollChild, "UIPanelButtonTemplate")
+    -- Confirm button — anchored to bottom of ContentFrame so it never overlaps text
+    local confirmBtn = CreateFrame("Button", nil, ContentFrame, "UIPanelButtonTemplate")
     confirmBtn:SetSize(220, 30)
-    confirmBtn:SetPoint("TOP", ScrollChild, "TOP", 0, y)
+    confirmBtn:SetPoint("BOTTOM", ContentFrame, "BOTTOM", 0, 10)
     confirmBtn:SetText("|cff00ff00Continue >>|r")
     confirmBtn:SetScript("OnClick", function()
         ShowConfirmPanel()
     end)
     confirmBtn:Show()
     table.insert(contentElements, confirmBtn)
-    y = y - 40
 
     ScrollChild:SetHeight(math.abs(y) + 10)
 
@@ -592,6 +662,32 @@ function ShowConfirmPanel()
     local y = -8
 
     AddLabel(y, "|cffFFD700Confirm Challenge|r", "GameFontNormalLarge")
+
+    -- Navigation links — top-right, on same line as title
+    local changeDiffBtn = CreateFrame("Button", nil, ScrollChild)
+    changeDiffBtn:SetSize(130, 18)
+    changeDiffBtn:SetPoint("TOPRIGHT", ScrollChild, "TOPRIGHT", -140, y)
+    local changeDiffLabel = changeDiffBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    changeDiffLabel:SetPoint("RIGHT", 0, 0)
+    changeDiffLabel:SetText("|cff888888Change Difficulty|r")
+    changeDiffBtn:SetScript("OnClick", function() ShowDifficultyPanel() end)
+    changeDiffBtn:SetScript("OnEnter", function() changeDiffLabel:SetTextColor(1.0, 0.82, 0.0) end)
+    changeDiffBtn:SetScript("OnLeave", function() changeDiffLabel:SetTextColor(0.53, 0.53, 0.53) end)
+    changeDiffBtn:Show()
+    table.insert(contentElements, changeDiffBtn)
+
+    local changeDungBtn = CreateFrame("Button", nil, ScrollChild)
+    changeDungBtn:SetSize(130, 18)
+    changeDungBtn:SetPoint("TOPRIGHT", ScrollChild, "TOPRIGHT", -8, y)
+    local changeDungLabel = changeDungBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    changeDungLabel:SetPoint("RIGHT", 0, 0)
+    changeDungLabel:SetText("|cff888888Change Dungeon|r")
+    changeDungBtn:SetScript("OnClick", function() ShowDungeonPanel() end)
+    changeDungBtn:SetScript("OnEnter", function() changeDungLabel:SetTextColor(1.0, 0.82, 0.0) end)
+    changeDungBtn:SetScript("OnLeave", function() changeDungLabel:SetTextColor(0.53, 0.53, 0.53) end)
+    changeDungBtn:Show()
+    table.insert(contentElements, changeDungBtn)
+
     y = y - 30
     AddDivider(y)
     y = y - 14
@@ -655,16 +751,6 @@ function ShowConfirmPanel()
     startBtn:Show()
     table.insert(contentElements, startBtn)
     y = y - 36
-
-    AddClickableText(y, "|cff888888<< Change Difficulty|r", function()
-        ShowDifficultyPanel()
-    end)
-    y = y - 22
-
-    AddClickableText(y, "|cff888888<< Change Dungeon|r", function()
-        ShowDungeonPanel()
-    end)
-    y = y - 28
 
     ScrollChild:SetHeight(math.abs(y) + 10)
 end
