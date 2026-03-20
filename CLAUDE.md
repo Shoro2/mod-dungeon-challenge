@@ -28,7 +28,9 @@ mod-dungeon-challenge/
 │   └── db-characters/
 │       └── 00_dungeon_challenge_characters.sql  # Leaderboard, history, snapshots, pending
 ├── lua_scripts/
-│   └── dungeon_challenge_gameobject.lua        # Eluna Lua UI for GameObject gossip
+│   ├── dungeon_challenge_server.lua            # AIO server: data loading, handlers, GO gossip
+│   ├── dungeon_challenge_ui.lua                # AIO client: WoW UI frames (sent to client via AIO)
+│   └── dungeon_challenge_gameobject.lua        # [DEPRECATED] Old gossip-based UI
 ├── src/
 │   ├── DungeonChallenge.h                      # Header: All data structures + manager + DataMap
 │   ├── DungeonChallenge.cpp                    # Singleton manager implementation
@@ -61,11 +63,15 @@ mod-dungeon-challenge/
 | `DungeonChallengeUnitScript` | DungeonChallengeScripts.cpp | Damage modification via UnitScript hooks |
 | `DungeonChallengeTimerScript` | DungeonChallengeScripts.cpp | Timer display (AllMapScript) |
 
-### Lua Script
+### Lua Scripts (AIO-based UI)
 
-| File | Purpose |
-|------|---------|
-| `lua_scripts/dungeon_challenge_gameobject.lua` | Eluna script: GameObject gossip UI for dungeon/difficulty selection, leaderboard, snapshots. Communicates with C++ via `dungeon_challenge_pending` DB table. |
+| File | Side | Purpose |
+|------|------|---------|
+| `lua_scripts/dungeon_challenge_server.lua` | Server | AIO server script: loads dungeon data from DB, registers AIO handlers for client requests (leaderboard, my runs, snapshots, start challenge), sends initial data on login via `AIO.AddOnInit`, handles GameObject gossip → opens client UI |
+| `lua_scripts/dungeon_challenge_ui.lua` | Client | AIO client addon (sent to WoW client): creates a full UI frame with tabs (Dungeons, Leaderboard, My Runs, Records), dungeon/difficulty selection, confirm panel, slash command `/dc`. All UI is rendered as native WoW frames. |
+| `lua_scripts/dungeon_challenge_gameobject.lua` | Server | **[DEPRECATED]** Old gossip-menu-based UI. Replaced by the AIO scripts above. |
+
+**AIO Architecture**: The server script registers the client file via `AIO.AddAddon()`. On login, dungeon data, affix data, and config are sent to the client via `AIO.AddOnInit()`. The client creates WoW frames for the UI. Server-client communication uses `AIO.Msg():Add():Send()` pattern. The `dungeon_challenge_pending` DB table is still used for Lua→C++ challenge handoff.
 
 ### Design Patterns
 
@@ -84,13 +90,24 @@ mod-dungeon-challenge/
 ### Data Flow
 
 ```
+Server startup:
+    AIO.AddAddon("dungeon_challenge_ui.lua") → client receives UI code
+    AIO.AddOnInit() → on login, sends dungeon/affix/config data to client
+    ↓
 Player clicks Dungeon Challenge Stone (GameObject)
     ↓
-Lua: OnGossipHello → ShowMainMenu → ShowDungeonMenu → ShowDifficultyMenu → ShowConfirmMenu
+Lua Server: OnGossipHello → GossipComplete → AIO.Handle(player, "ShowUI")
     ↓
-Lua: StartChallengeRun()
-    ├─ Validation (group size ≤ 5, optional)
+Lua Client: ShowUI handler → MainFrame:Show() → ShowDungeonPanel()
+    ↓
+Client: Player selects dungeon + difficulty (all client-side, no server round-trips)
+    ↓
+Client: Clicks "START CHALLENGE" → AIO.Msg():Add("StartChallenge", mapId, diff):Send()
+    ↓
+Lua Server: StartChallenge handler
+    ├─ Validation (group size ≤ 5, difficulty range)
     ├─ INSERT INTO dungeon_challenge_pending (player_guid, map_id, difficulty)
+    ├─ AIO.Handle(member, "ChallengeStarted", ...) for each group member
     └─ Teleport (solo or all group members)
     ↓
 C++: OnPlayerMapChanged() (PlayerScript hook)
@@ -241,9 +258,10 @@ Timer penalty per death: +DeathPenaltySeconds (Default: 15s)
 
 1. **Affix Implementation**: Necrotic, Explosive, Volcanic, Storming, Inspiring are prepared as hooks but not implemented
 2. **Boss Detection**: Currently via `creature_template.rank >= 3` → some bosses have rank < 3
-3. **Timer UI**: Currently only chat messages → could use WorldState-based UI
+3. **Timer UI**: Currently only chat messages → could be extended to AIO-based timer display frame
 4. **Prepared Statements**: Currently format-string-based queries → should use prepared statements
 5. **Creature Scaling**: `GetCreatureBySpawnIdStore()` must be verified against correct API
 6. **Instance Reset**: No automatic instance reset after run completion
 7. **Snapshot Reload**: Snapshots are loaded at startup but not periodically refreshed
-8. **Lua CONFIG sync**: Config values in Lua script must be manually kept in sync with worldserver.conf
+8. **Lua CONFIG sync**: Config values are sent to client via AIO.AddOnInit on login (server-side config is authoritative)
+9. **AIO Dependency**: Requires AIO framework (AIO.lua + dependencies) in server `lua_scripts/` folder
