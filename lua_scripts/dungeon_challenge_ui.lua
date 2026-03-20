@@ -192,7 +192,7 @@ for i, t in ipairs(TAB_NAMES) do
 end
 
 -- ============================================================================
--- Content Area (scrollable)
+-- Content Area (scrollable, no XML template — works reliably with AIO)
 -- ============================================================================
 
 local ContentFrame = CreateFrame("Frame", nil, MainFrame)
@@ -207,18 +207,28 @@ ContentFrame:SetBackdrop({
 ContentFrame:SetBackdropColor(0.02, 0.02, 0.05, 0.9)
 ContentFrame:SetBackdropBorderColor(0.3, 0.3, 0.5, 0.6)
 
-local ScrollFrame = CreateFrame("ScrollFrame", "DCScrollFrame", ContentFrame,
-    "UIPanelScrollFrameTemplate")
+-- Manual ScrollFrame (no UIPanelScrollFrameTemplate — avoids AIO/template issues)
+local ScrollFrame = CreateFrame("ScrollFrame", nil, ContentFrame)
 ScrollFrame:SetPoint("TOPLEFT", 4, -4)
-ScrollFrame:SetPoint("BOTTOMRIGHT", -26, 4)
+ScrollFrame:SetPoint("BOTTOMRIGHT", -4, 4)
 
--- ScrollChild width must match the scroll frame content area (~480px)
 local SCROLL_CONTENT_WIDTH = 480
 
-local ScrollChild = CreateFrame("Frame", nil, ScrollFrame)
+local ScrollChild = CreateFrame("Frame", nil)
 ScrollChild:SetWidth(SCROLL_CONTENT_WIDTH)
 ScrollChild:SetHeight(1)
 ScrollFrame:SetScrollChild(ScrollChild)
+
+-- Mouse wheel scrolling
+ScrollFrame:EnableMouseWheel(true)
+ScrollFrame:SetScript("OnMouseWheel", function(self, delta)
+    local current = self:GetVerticalScroll()
+    local maxScroll = max(0, ScrollChild:GetHeight() - self:GetHeight())
+    local newScroll = current - (delta * 40)
+    if newScroll < 0 then newScroll = 0 end
+    if newScroll > maxScroll then newScroll = maxScroll end
+    self:SetVerticalScroll(newScroll)
+end)
 
 -- ============================================================================
 -- Dynamic Content Builder
@@ -310,6 +320,10 @@ function ShowDungeonPanel()
     ClearContent()
     selectedDungeon = nil
     selectedDifficulty = nil
+
+    DEFAULT_CHAT_FRAME:AddMessage(string.format(
+        "|cff00ff00[DC Debug]|r ShowDungeonPanel called, dungeonData count: %d",
+        dungeonData and #dungeonData or -1))
 
     local y = -8
     AddLabel(y, "|cffFFD700Select a Dungeon:|r", "GameFontNormalLarge")
