@@ -168,7 +168,6 @@ local function CreateTabButton(parent, index, tabInfo)
 
     btn:SetScript("OnClick", function()
         currentTab = tabInfo.key
-        -- Update tab highlight and refresh content
         for _, tb in ipairs(tabButtons) do
             tb.bg:SetTexture(0.15, 0.15, 0.3, 0.8)
         end
@@ -208,29 +207,31 @@ ContentFrame:SetBackdrop({
 ContentFrame:SetBackdropColor(0.02, 0.02, 0.05, 0.9)
 ContentFrame:SetBackdropBorderColor(0.3, 0.3, 0.5, 0.6)
 
--- Scroll frame setup
 local ScrollFrame = CreateFrame("ScrollFrame", "DCScrollFrame", ContentFrame,
     "UIPanelScrollFrameTemplate")
 ScrollFrame:SetPoint("TOPLEFT", 4, -4)
 ScrollFrame:SetPoint("BOTTOMRIGHT", -26, 4)
 
 local ScrollChild = CreateFrame("Frame", nil, ScrollFrame)
-ScrollChild:SetSize(ScrollFrame:GetWidth(), 1)
+ScrollChild:SetSize(1, 1)
 ScrollFrame:SetScrollChild(ScrollChild)
 
 -- ============================================================================
 -- Dynamic Content Builder
+-- Instead of SetParent(nil) (which crashes for FontStrings/Textures in 3.3.5),
+-- we destroy and recreate the ScrollChild each time content changes.
 -- ============================================================================
 
-local contentElements = {}
-
 local function ClearContent()
-    for _, elem in ipairs(contentElements) do
-        elem:Hide()
-        elem:SetParent(nil)
-    end
-    contentElements = {}
-    ScrollChild:SetHeight(1)
+    -- Hide old scroll child (WoW will garbage collect orphaned children)
+    ScrollChild:Hide()
+    ScrollChild:SetParent(nil)
+
+    -- Create fresh scroll child
+    ScrollChild = CreateFrame("Frame", nil, ScrollFrame)
+    ScrollChild:SetSize(1, 1)
+    ScrollFrame:SetScrollChild(ScrollChild)
+    ScrollFrame:SetVerticalScroll(0)
 end
 
 local function AddLabel(yOffset, text, fontTemplate, r, g, b)
@@ -244,7 +245,6 @@ local function AddLabel(yOffset, text, fontTemplate, r, g, b)
         label:SetTextColor(r, g, b)
     end
     label:Show()
-    table.insert(contentElements, label)
     return label
 end
 
@@ -255,7 +255,6 @@ local function AddButton(yOffset, width, height, text, onClick)
     btn:SetText(text)
     btn:SetScript("OnClick", onClick)
     btn:Show()
-    table.insert(contentElements, btn)
     return btn
 end
 
@@ -266,7 +265,6 @@ local function AddDivider(yOffset)
     div:SetHeight(1)
     div:SetTexture(0.4, 0.4, 0.6, 0.5)
     div:Show()
-    table.insert(contentElements, div)
     return div
 end
 
@@ -283,8 +281,10 @@ function ShowDungeonPanel()
     AddLabel(y, "|cffFFD700Select a Dungeon:|r", "GameFontNormalLarge")
     y = y - 24
 
-    if #dungeonData == 0 then
-        AddLabel(y, "|cffff0000No dungeons available. Check server configuration.|r")
+    if not dungeonData or #dungeonData == 0 then
+        AddLabel(y, "|cffff0000No dungeons available.|r")
+        y = y - 18
+        AddLabel(y, "|cffaaaaaaWaiting for server data... Try /reload|r")
         ScrollChild:SetHeight(math.abs(y) + 30)
         return
     end
@@ -293,8 +293,7 @@ function ShowDungeonPanel()
         AddDivider(y - 2)
         y = y - 6
 
-        local btnText = string.format("%s", d.name)
-        local btn = AddButton(y, 460, 28, btnText, function()
+        local btn = AddButton(y, 460, 28, d.name, function()
             selectedDungeon = i
             ShowDifficultyPanel()
         end)
@@ -303,9 +302,8 @@ function ShowDungeonPanel()
         info:SetPoint("TOPLEFT", 8, y - 30)
         info:SetText(string.format(
             "    |cffaaaaaa Timer: %d min  |  Bosses: %d|r",
-            d.timerMinutes, d.bossCount))
+            d.timerMinutes or 30, d.bossCount or 0))
         info:Show()
-        table.insert(contentElements, info)
 
         y = y - 50
     end
@@ -332,8 +330,7 @@ function ShowDifficultyPanel()
         "GameFontNormalLarge")
     y = y - 22
 
-    -- Back button
-    local backBtn = AddButton(y, 100, 22, "<< Back", function()
+    AddButton(y, 100, 22, "<< Back", function()
         ShowDungeonPanel()
     end)
     y = y - 30
@@ -349,22 +346,19 @@ function ShowDifficultyPanel()
         local affixes = GetAffixesForDifficulty(diff)
         local r, g, b = DifficultyColor(diff)
 
-        local btnText = string.format("Level %d", diff)
-        local btn = AddButton(y, 90, 24, btnText, function()
+        local btn = AddButton(y, 90, 24, string.format("Level %d", diff), function()
             selectedDifficulty = diff
             ShowConfirmPanel()
         end)
 
-        -- Stats on the right
         local statsText = ScrollChild:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         statsText:SetPoint("LEFT", btn, "RIGHT", 10, 0)
         statsText:SetText(string.format(
-            "|cffaaaaaaHP: |cff%02x%02xff%.1fx|r  |cffaaaaaaDMG: |cff%02x%02xff%.1fx|r  |cffaaaaaaAffixes: %d|r",
-            math.floor(r*255), math.floor(g*255), 0, hpMult,
-            math.floor(r*255), math.floor(g*255), 0, dmgMult,
+            "|cffaaaaaaHP: |cff%02x%02x00x%.1f|r  |cffaaaaaaDMG: |cff%02x%02x00x%.1f|r  |cffaaaaaaAffixes: %d|r",
+            math.floor(r*255), math.floor(g*255), hpMult,
+            math.floor(r*255), math.floor(g*255), dmgMult,
             #affixes))
         statsText:Show()
-        table.insert(contentElements, statsText)
 
         y = y - 28
     end
@@ -389,31 +383,26 @@ function ShowConfirmPanel()
     local hpMult = GetHPMult(diff)
     local dmgMult = GetDMGMult(diff)
     local affixes = GetAffixesForDifficulty(diff)
-    local r, g, b = DifficultyColor(diff)
 
     local y = -8
 
-    -- Header
     AddLabel(y, "|cffFFD700Confirm Challenge|r", "GameFontNormalLarge")
     y = y - 30
     AddDivider(y)
     y = y - 14
 
-    -- Dungeon info
     AddLabel(y, string.format("Dungeon: |cffff8000%s|r", d.name))
     y = y - 18
-    AddLabel(y, string.format("Level: %s%d|r",
-        DifficultyColorHex(diff), diff))
+    AddLabel(y, string.format("Level: %s%d|r", DifficultyColorHex(diff), diff))
     y = y - 18
-    AddLabel(y, string.format("Bosses: |cffffff00%d|r", d.bossCount))
+    AddLabel(y, string.format("Bosses: |cffffff00%d|r", d.bossCount or 0))
     y = y - 18
-    AddLabel(y, string.format("Timer: |cffffff00%d minutes|r", d.timerMinutes))
+    AddLabel(y, string.format("Timer: |cffffff00%d minutes|r", d.timerMinutes or 30))
     y = y - 22
     AddDivider(y)
     y = y - 14
 
-    -- Scaling
-    AddLabel(y, "|cffFFD700Scaling:|r", "GameFontNormal")
+    AddLabel(y, "|cffFFD700Scaling:|r")
     y = y - 18
     AddLabel(y, string.format("  HP Multiplier: |cffff0000x%.2f|r", hpMult))
     y = y - 16
@@ -425,9 +414,7 @@ function ShowConfirmPanel()
     AddDivider(y)
     y = y - 14
 
-    -- Affixes
-    AddLabel(y, string.format("|cffFFD700Active Affixes (%d):|r", #affixes),
-        "GameFontNormal")
+    AddLabel(y, string.format("|cffFFD700Active Affixes (%d):|r", #affixes))
     y = y - 18
 
     if #affixes == 0 then
@@ -436,7 +423,7 @@ function ShowConfirmPanel()
     else
         for _, a in ipairs(affixes) do
             AddLabel(y, string.format("  |cffff8000%s|r - |cffaaaaaa%s|r",
-                a.name, a.desc))
+                a.name, a.desc or ""))
             y = y - 16
         end
     end
@@ -449,7 +436,7 @@ function ShowConfirmPanel()
     AddDivider(y)
     y = y - 14
 
-    -- Buttons
+    -- Start button
     local startBtn = CreateFrame("Button", nil, ScrollChild, "UIPanelButtonTemplate")
     startBtn:SetSize(200, 30)
     startBtn:SetPoint("TOP", ScrollChild, "TOP", 0, y)
@@ -461,15 +448,14 @@ function ShowConfirmPanel()
         MainFrame:Hide()
     end)
     startBtn:Show()
-    table.insert(contentElements, startBtn)
     y = y - 36
 
-    local changeDiffBtn = AddButton(y, 180, 24, "<< Change Difficulty", function()
+    AddButton(y, 180, 24, "<< Change Difficulty", function()
         ShowDifficultyPanel()
     end)
     y = y - 28
 
-    local changeDungeonBtn = AddButton(y, 180, 24, "<< Change Dungeon", function()
+    AddButton(y, 180, 24, "<< Change Dungeon", function()
         ShowDungeonPanel()
     end)
     y = y - 28
@@ -481,19 +467,21 @@ end
 -- Panel: Leaderboard
 -- ============================================================================
 
-local leaderboardDungeon = nil
-
 function ShowLeaderboardPanel()
     ClearContent()
-    leaderboardDungeon = nil
 
     local y = -8
     AddLabel(y, "|cffFFD700Leaderboard - Select Dungeon:|r", "GameFontNormalLarge")
     y = y - 28
 
+    if not dungeonData or #dungeonData == 0 then
+        AddLabel(y, "|cffaaaaaaNo dungeons loaded.|r")
+        ScrollChild:SetHeight(math.abs(y) + 30)
+        return
+    end
+
     for i, d in ipairs(dungeonData) do
-        local btn = AddButton(y, 400, 26, d.name, function()
-            leaderboardDungeon = i
+        AddButton(y, 400, 26, d.name, function()
             AIO.Msg()
                 :Add("DungeonChallenge", "RequestLeaderboard", d.mapId)
                 :Send()
@@ -520,28 +508,27 @@ function ShowLeaderboardData(mapId, entries)
         "GameFontNormalLarge")
     y = y - 22
 
-    local backBtn = AddButton(y, 100, 22, "<< Back", function()
+    AddButton(y, 100, 22, "<< Back", function()
         ShowLeaderboardPanel()
     end)
     y = y - 30
     AddDivider(y)
     y = y - 10
 
-    if #entries == 0 then
+    if not entries or #entries == 0 then
         AddLabel(y, "|cffaaaaaaNo entries yet.|r")
         y = y - 20
     else
-        -- Header
         AddLabel(y, "|cffFFD700 #   Level   Time        Player          Deaths|r",
             "GameFontHighlightSmall")
         y = y - 16
 
         for rank, e in ipairs(entries) do
-            local timeStr = FormatTime(e.time)
+            local timeStr = FormatTime(e.time or 0)
             local line = string.format(
                 " |cffffcc00#%-3d|r  %s%d|r     |cff00ff00%-10s|r  |cff69ccf0%-15s|r  %d",
-                rank, DifficultyColorHex(e.difficulty), e.difficulty,
-                timeStr, e.leader, e.deaths)
+                rank, DifficultyColorHex(e.difficulty or 1), e.difficulty or 1,
+                timeStr, e.leader or "?", e.deaths or 0)
             AddLabel(y, line, "GameFontHighlightSmall")
             y = y - 15
         end
@@ -561,14 +548,10 @@ function ShowMyRunsData(entries)
     AddLabel(y, "|cffFFD700My Best Runs:|r", "GameFontNormalLarge")
     y = y - 28
 
-    if #entries == 0 then
+    if not entries or #entries == 0 then
         AddLabel(y, "|cffaaaaaaNo completed challenges yet.|r")
         y = y - 20
     else
-        AddLabel(y, "|cffFFD700 Dungeon               Level   Time        Deaths|r",
-            "GameFontHighlightSmall")
-        y = y - 16
-
         for _, e in ipairs(entries) do
             local dungeonName = "Unknown"
             for _, d in ipairs(dungeonData) do
@@ -578,11 +561,11 @@ function ShowMyRunsData(entries)
                 end
             end
 
-            local timeStr = FormatTime(e.time)
+            local timeStr = FormatTime(e.time or 0)
             local line = string.format(
                 " |cffff8000%-20s|r  %s%d|r     |cff00ff00%-10s|r  %d deaths",
-                dungeonName, DifficultyColorHex(e.difficulty),
-                e.difficulty, timeStr, e.deaths)
+                dungeonName, DifficultyColorHex(e.difficulty or 1),
+                e.difficulty or 1, timeStr, e.deaths or 0)
             AddLabel(y, line, "GameFontHighlightSmall")
             y = y - 15
         end
@@ -603,8 +586,14 @@ function ShowRecordsPanel()
         "GameFontNormalLarge")
     y = y - 28
 
+    if not dungeonData or #dungeonData == 0 then
+        AddLabel(y, "|cffaaaaaaNo dungeons loaded.|r")
+        ScrollChild:SetHeight(math.abs(y) + 30)
+        return
+    end
+
     for i, d in ipairs(dungeonData) do
-        local btn = AddButton(y, 400, 26, d.name, function()
+        AddButton(y, 400, 26, d.name, function()
             AIO.Msg()
                 :Add("DungeonChallenge", "RequestSnapshots", d.mapId)
                 :Send()
@@ -631,19 +620,19 @@ function ShowSnapshotData(mapId, entries)
         "GameFontNormalLarge")
     y = y - 22
 
-    local backBtn = AddButton(y, 100, 22, "<< Back", function()
+    AddButton(y, 100, 22, "<< Back", function()
         ShowRecordsPanel()
     end)
     y = y - 30
     AddDivider(y)
     y = y - 10
 
-    if #entries == 0 then
+    if not entries or #entries == 0 then
         AddLabel(y, "|cffaaaaaaNo records yet.|r")
         y = y - 20
     else
         for _, e in ipairs(entries) do
-            local timeStr = FormatTime(e.snapTime)
+            local timeStr = FormatTime(e.snapTime or 0)
             local finalTag = ""
             if e.isFinal then
                 finalTag = " |cff00ff00[FINAL]|r"
@@ -655,9 +644,9 @@ function ShowSnapshotData(mapId, entries)
 
             local line = string.format(
                 " %sLv%d|r  |cffff8000%s|r  at |cff00ff00%s|r  |cffaaaaaa%d deaths (+%ds)|r  |cff69ccf0%s|r%s%s",
-                DifficultyColorHex(e.difficulty), e.difficulty,
-                e.bossName, timeStr, e.deaths, e.penalty,
-                e.playerName, finalTag, rewardTag)
+                DifficultyColorHex(e.difficulty or 1), e.difficulty or 1,
+                e.bossName or "?", timeStr, e.deaths or 0, e.penalty or 0,
+                e.playerName or "?", finalTag, rewardTag)
             AddLabel(y, line, "GameFontHighlightSmall")
             y = y - 16
         end
@@ -677,6 +666,9 @@ ClientHandlers.Init = function(dungeons, affixes, cfg)
     dungeonData = dungeons or {}
     affixData = affixes or {}
     config = cfg or {}
+    DEFAULT_CHAT_FRAME:AddMessage(string.format(
+        "|cff00ff00[Dungeon Challenge]|r Loaded %d dungeons from server.",
+        #dungeonData))
 end
 
 -- Server tells us to show the UI
@@ -686,7 +678,6 @@ ClientHandlers.ShowUI = function()
         return
     end
 
-    -- Default to dungeons tab
     currentTab = "dungeons"
     for i, tb in ipairs(tabButtons) do
         if i == 1 then
@@ -719,7 +710,7 @@ ClientHandlers.ChallengeStarted = function(dungeonName, difficulty, starterName)
     DEFAULT_CHAT_FRAME:AddMessage(string.format(
         "|cff00ff00[Dungeon Challenge]|r |cffff8000%s|r started: "
         .. "|cff00ff00%s|r at Level |cffff8000%d|r!",
-        starterName, dungeonName, difficulty))
+        starterName or "?", dungeonName or "?", difficulty or 0))
     MainFrame:Hide()
 end
 
