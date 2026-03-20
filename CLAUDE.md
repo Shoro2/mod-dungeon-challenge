@@ -184,26 +184,32 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 
 | ID | Name | Effect | Min Level | DBC Spell |
 |----|------|--------|-----------|-----------|
-| 1 | Call for Help | Calls allies within 30y when entering combat | 10 | None (C++) |
-| 2 | Speedy | +100% move speed, +10% attack speed | 20 | 900050 |
-| 3 | Big Boy | +50% HP, +30% size | 30 | None (C++) |
-| 4 | Immolation Aura | Periodic fire damage = Level × 80 to players within 8y | 40 | 900051 (visual) |
-| 5 | CC Immunity | Immune to all crowd control | 50 | 900052 |
-| 6 | Sharpened Weapons | +33% damage | 60 | None (C++) |
-| 7 | Lil' Bro | On death: spawns 2 copies with -90% HP (1 lootable) | 70 | None (C++) |
-| 8 | Damage Reduce | Allies within 30y take -25% damage | 80 | 900054 (visual) |
-| 9 | Bigger Boy | Additional +50% HP, +10% damage | 90 | None (C++) |
-| 10 | Hell Touched | +666 fire+shadow dmg on hit, -10% stats debuff (10s, 10 stacks) | 100 | 900053 |
+| 1 | Call for Help | Calls allies within 30y when entering combat | 10 | 900060 (visual) |
+| 2 | Speedy | +100% move speed, +10% attack speed | 20 | 900050 (full DBC) |
+| 3 | Big Boy | +50% HP, increased size | 30 | 900056 (size DBC, HP C++) |
+| 4 | Immolation Aura | Periodic fire damage = Level × 80 to players within 8y | 40 | 900051 (visual, damage C++) |
+| 5 | CC Immunity | Immune to all crowd control | 50 | 900052 (full DBC) |
+| 6 | Heavy Hits | +33% damage | 60 | 900058 (full DBC) |
+| 7 | Lil' Bro | Splits 1→2→4 on death, -90% HP each tier | 70 | 900059 (visual, logic C++) |
+| 8 | Damage Reduce | Allies within 30y take -25% damage | 80 | 900055 (visual, logic C++) |
+| 9 | Bigger Boy | +50% HP, increased size, +10% damage | 90 | 900057 (size+dmg DBC, HP C++) |
+| 10 | Hell Touched | +666 fire+shadow dmg on hit, -10% stats debuff (10s, 10 stacks) | 100 | 900054 (visual) + 900053 (debuff) |
 
 ### DBC Spell IDs (created manually in Stoneharry spell editor)
 
 | Spell ID | Name | Purpose |
 |----------|------|---------|
-| 900050 | Speedy Aura | +100% move speed, +10% melee haste |
-| 900051 | Immolation Visual | Fire visual aura (damage in C++) |
-| 900052 | CC Immunity | Visual indicator on CC-immune creature |
-| 900053 | Hell Touched Debuff | -10% all stats, 10s duration, stackable to 10 |
-| 900054 | Damage Reduce Visual | Visual indicator on creature with damage reduce |
+| 900050 | Speedy | Aura on NPC: +100% move speed, +10% melee haste |
+| 900051 | Immolation Aura | Aura on NPC: fire visual (damage in C++) |
+| 900052 | CC Immunity | Aura on NPC: mechanic immunity (all CC) |
+| 900053 | Hell Touched Aura | Debuff on player: -10% all stats, 10s, stackable to 10 |
+| 900054 | Hell Touched | Aura on NPC: Hell Touched visual |
+| 900055 | Damage Reduction Aura | Aura on NPC: Damage Reduction visual |
+| 900056 | Big Boy | Aura on NPC: size increase |
+| 900057 | Bigger Boy | Aura on NPC: size + damage increase |
+| 900058 | Heavy Hits | Aura on NPC: +33% damage |
+| 900059 | Lil Bro | Aura on NPC: Lil Bro visual |
+| 900060 | Call for Help | Aura on NPC: Call for Help visual |
 
 ### Affix Assignment
 
@@ -215,16 +221,16 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 
 ### Affix Implementation Details
 
-- **Call for Help**: `OnAllCreatureUpdate()` → when creature enters combat + hasCalled flag, iterate nearby creatures and `AttackStart()`
-- **Speedy**: `ApplyAffixToCreature()` → CastSpell(SPELL_AFFIX_SPEEDY) DBC aura
-- **Big Boy**: `ApplyAffixToCreature()` → SetMaxHealth * 1.5 + SetObjectScale * 1.3
-- **Immolation**: `OnAllCreatureUpdate()` → 2-second tick timer, `EnvironmentalDamage(DAMAGE_FIRE, difficulty * 80)` to players within 8y
-- **CC Immunity**: `ApplyAffixToCreature()` → `ApplySpellImmune()` for all CC mechanics + visual aura
-- **Sharpened Weapons**: `ApplyAffixToCreature()` → extraDamageMultiplier *= 1.33
-- **Lil' Bro**: `OnPlayerCreatureKill()` → SummonCreature × 2, HP = 10% original, one marked noLoot, isCopy prevents recursion
-- **Damage Reduce**: `ApplyAffixToCreature()` → sets incomingDamageReduction = 0.25 on all allies within 30y; UnitScript checks this on player→creature damage
-- **Bigger Boy**: `ApplyAffixToCreature()` → SetMaxHealth * 1.5 + extraDamageMultiplier *= 1.1
-- **Hell Touched**: UnitScript `ModifyMeleeDamage()`/`ModifySpellDamageTaken()` → EnvironmentalDamage(666) + CastSpell(debuff)
+- **Call for Help**: C++ `OnAllCreatureUpdate()` → on enter combat, pull allies within 30y. DBC aura 900060 = visual only.
+- **Speedy**: DBC aura 900050 handles everything (+100% speed, +10% haste). No C++.
+- **Big Boy**: C++ `SetMaxHealth * 1.5`. DBC aura 900056 handles size increase.
+- **Immolation**: C++ `OnAllCreatureUpdate()` → 2s tick, `EnvironmentalDamage(DAMAGE_FIRE, difficulty * 80)` within 8y. DBC aura 900051 = visual.
+- **CC Immunity**: DBC aura 900052 handles all mechanic immunities. No C++.
+- **Heavy Hits**: DBC aura 900058 handles +33% damage. No C++.
+- **Lil' Bro**: C++ `OnPlayerCreatureKill()` → generation-based split (gen 0→2 copies gen 1, gen 1→2 copies gen 2, gen 2→stop). Total: 1+2+4=7 mobs. Only gen 0 drops loot. DBC aura 900059 = visual.
+- **Damage Reduce**: C++ `ApplyAffixToCreature()` → sets incomingDamageReduction = 0.25 on allies within 30y; UnitScript reduces player→creature damage. DBC aura 900055 = visual.
+- **Bigger Boy**: C++ `SetMaxHealth * 1.5`. DBC aura 900057 handles size + damage increase.
+- **Hell Touched**: C++ UnitScript `ModifyMeleeDamage()`/`ModifySpellDamageTaken()` → EnvironmentalDamage(666) + CastSpell(900053 debuff). DBC aura 900054 = visual on NPC.
 
 ## Database Tables
 
@@ -254,7 +260,7 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 | NPC Entry | 500000 | Dungeon Challenge NPC (fallback) |
 | GameObject Entry | 500002 | Dungeon Challenge Stone (primary) |
 | Gossip Actions | 1000-5999 | Menu navigation (Lua + C++) |
-| Spells | 900050-900054 | Affix DBC spells (Speedy, Immolation, CC Immunity, Hell Touched, Damage Reduce) |
+| Spells | 900050-900060 | Affix DBC spells (all affixes have a DBC aura) |
 | Maps | 574-668 | WotLK 5-man dungeons |
 
 ## Code Conventions

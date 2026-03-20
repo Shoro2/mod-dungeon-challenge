@@ -32,16 +32,16 @@ local CONFIG = {
 
 -- Every 10 levels adds +1 affix. Selected mobs receive ALL available affixes.
 local AFFIXES = {
-    { id = 1,  name = "Call for Help",     desc = "Calls allies within 30y for help",                           minDiff = 10  },
-    { id = 2,  name = "Speedy",            desc = "+100% move speed, +10% attack speed",                        minDiff = 20  },
-    { id = 3,  name = "Big Boy",           desc = "+50% HP, +30% size",                                         minDiff = 30  },
-    { id = 4,  name = "Immolation Aura",   desc = "Periodic fire damage (Level x 80) to nearby players",        minDiff = 40  },
-    { id = 5,  name = "CC Immunity",       desc = "Immune to all crowd control",                                 minDiff = 50  },
-    { id = 6,  name = "Sharpened Weapons", desc = "+33% damage",                                                 minDiff = 60  },
-    { id = 7,  name = "Lil' Bro",          desc = "Spawns 2 copies on death (-90% HP, 1 lootable)",              minDiff = 70  },
-    { id = 8,  name = "Damage Reduce",     desc = "Allies within 30y take -25% damage",                          minDiff = 80  },
-    { id = 9,  name = "Bigger Boy",        desc = "Additional +50% HP, +10% damage",                             minDiff = 90  },
-    { id = 10, name = "Hell Touched",      desc = "+666 hellfire dmg on hit, -10% stats (10s, stacks 10)",       minDiff = 100 },
+    { id = 1,  name = "Call for Help",   desc = "Calls allies within 30y for help",                             minDiff = 10  },
+    { id = 2,  name = "Speedy",          desc = "+100% move speed, +10% attack speed",                          minDiff = 20  },
+    { id = 3,  name = "Big Boy",         desc = "+50% HP, increased size",                                      minDiff = 30  },
+    { id = 4,  name = "Immolation Aura", desc = "Periodic fire damage (Level x 80) to nearby players",          minDiff = 40  },
+    { id = 5,  name = "CC Immunity",     desc = "Immune to all crowd control",                                   minDiff = 50  },
+    { id = 6,  name = "Heavy Hits",      desc = "+33% damage",                                                   minDiff = 60  },
+    { id = 7,  name = "Lil' Bro",        desc = "Splits into 2 on death (1->2->4), -90% HP each tier",          minDiff = 70  },
+    { id = 8,  name = "Damage Reduce",   desc = "Allies within 30y take -25% damage",                            minDiff = 80  },
+    { id = 9,  name = "Bigger Boy",      desc = "Additional +50% HP, increased size, +10% damage",               minDiff = 90  },
+    { id = 10, name = "Hell Touched",    desc = "+666 hellfire dmg on hit, -10% stats (10s, stacks 10)",         minDiff = 100 },
 }
 
 -- ============================================================================

@@ -375,7 +375,7 @@ public:
         // Process affix on-death effects
         auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
 
-        // Remove loot from non-lootable Lil' Bro copies
+        // Remove loot from non-lootable Lil' Bro copies (generation > 0)
         if (creatureData->noLoot)
         {
             creature->RemoveFlag(UNIT_DYNAMIC_FLAGS, UNIT_DYNFLAG_LOOTABLE);
@@ -385,8 +385,8 @@ public:
         if (creatureData->affixes.empty())
             return;
 
-        // --- LIL' BRO: spawn 2 copies on death with -90% HP ---
-        if (creatureData->HasAffix(AFFIX_LIL_BRO) && !creatureData->isCopy)
+        // --- LIL' BRO: split 1->2->4 (generation 0->1->2, stop at gen 2) ---
+        if (creatureData->HasAffix(AFFIX_LIL_BRO) && creatureData->lilBroGeneration < 2)
         {
             HandleLilBroDeath(creature, run, map);
         }
@@ -395,6 +395,9 @@ public:
 private:
     void HandleLilBroDeath(Creature* creature, ChallengeRun* run, Map* map)
     {
+        auto* parentData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+        uint8 nextGeneration = parentData->lilBroGeneration + 1;
+
         uint32 entry = creature->GetEntry();
         float x = creature->GetPositionX();
         float y = creature->GetPositionY();
@@ -406,7 +409,6 @@ private:
 
         for (uint32 i = 0; i < 2; ++i)
         {
-            // Offset spawn positions slightly
             float offsetX = (i == 0) ? 2.0f : -2.0f;
             float offsetY = (i == 0) ? 1.0f : -1.0f;
 
@@ -415,23 +417,20 @@ private:
             if (!copy)
                 continue;
 
-            // Scale the copy
             copy->SetMaxHealth(copyHealth);
             copy->SetFullHealth();
 
-            // Mark as copy so it doesn't spawn more on death
             auto* copyData = copy->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
-            copyData->isCopy = true;
+            copyData->lilBroGeneration = nextGeneration;
+            copyData->affixes = parentData->affixes;
             copyData->processed = true;
 
             // Apply difficulty damage scaling
             copyData->extraDamageMultiplier = sDungeonChallengeMgr->GetDamageMultiplier(run->difficulty);
 
-            // Only the first copy is lootable
-            if (i == 1)
-                copyData->noLoot = true;
+            // Only original (generation 0) drops loot; all splits don't
+            copyData->noLoot = true;
 
-            // Make copy attack the creature's threat list target
             if (Unit* victim = creature->GetVictim())
                 copy->AI()->AttackStart(victim);
         }

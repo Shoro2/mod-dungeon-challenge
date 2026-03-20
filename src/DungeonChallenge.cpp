@@ -113,16 +113,16 @@ void DungeonChallengeMgr::LoadAffixData()
     // Every 10 levels adds +1 affix to the pool.
     // Selected mobs receive ALL available affixes for the current difficulty.
     _affixes = {
-        { AFFIX_CALL_FOR_HELP,     "Call for Help",     "Calls allies within 30y for help when entering combat.", 10 },
-        { AFFIX_SPEEDY,            "Speedy",            "+100% movement speed and +10% attack speed.", 20 },
-        { AFFIX_BIG_BOY,           "Big Boy",           "+50% HP and +30% increased size.", 30 },
-        { AFFIX_IMMOLATION,        "Immolation Aura",   "Deals periodic fire damage (Level x 80) to nearby players.", 40 },
-        { AFFIX_CC_IMMUNITY,       "CC Immunity",       "Immune to all crowd control effects.", 50 },
-        { AFFIX_SHARPENED_WEAPONS, "Sharpened Weapons", "+33% damage dealt.", 60 },
-        { AFFIX_LIL_BRO,           "Lil' Bro",          "Spawns 2 copies on death with -90% HP (1 lootable).", 70 },
-        { AFFIX_DAMAGE_REDUCE,     "Damage Reduce",     "Allies within 30y take 25% less damage.", 80 },
-        { AFFIX_BIGGER_BOY,        "Bigger Boy",        "Additional +50% HP and +10% damage.", 90 },
-        { AFFIX_HELL_TOUCHED,      "Hell Touched",      "Deals 666 hellfire damage on hit. Reduces stats by 10% (10s, stacks 10).", 100 },
+        { AFFIX_CALL_FOR_HELP, "Call for Help", "Calls allies within 30y for help when entering combat.", 10 },
+        { AFFIX_SPEEDY,        "Speedy",        "+100% movement speed and +10% attack speed.", 20 },
+        { AFFIX_BIG_BOY,       "Big Boy",       "+50% HP and increased size.", 30 },
+        { AFFIX_IMMOLATION,    "Immolation Aura", "Deals periodic fire damage (Level x 80) to nearby players.", 40 },
+        { AFFIX_CC_IMMUNITY,   "CC Immunity",   "Immune to all crowd control effects.", 50 },
+        { AFFIX_HEAVY_HITS,    "Heavy Hits",    "+33% damage dealt.", 60 },
+        { AFFIX_LIL_BRO,       "Lil' Bro",      "Splits into 2 copies on death (1->2->4), each with -90% HP.", 70 },
+        { AFFIX_DAMAGE_REDUCE, "Damage Reduce", "Allies within 30y take 25% less damage.", 80 },
+        { AFFIX_BIGGER_BOY,    "Bigger Boy",    "Additional +50% HP, increased size and +10% damage.", 90 },
+        { AFFIX_HELL_TOUCHED,  "Hell Touched",  "Deals 666 hellfire damage on hit. Reduces stats by 10% (10s, stacks 10).", 100 },
     };
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} affixes.", _affixes.size());
@@ -525,51 +525,35 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
     switch (affix)
     {
         case AFFIX_SPEEDY:
-            // +100% move speed, +10% attack speed via DBC aura
             creature->CastSpell(creature, SPELL_AFFIX_SPEEDY, true);
             break;
 
         case AFFIX_BIG_BOY:
-            // +50% HP, +30% size
+            // +50% HP; size handled by DBC aura
             creature->SetMaxHealth(static_cast<uint32>(creature->GetMaxHealth() * 1.5f));
             creature->SetFullHealth();
-            creature->SetObjectScale(creature->GetObjectScale() * 1.3f);
+            creature->CastSpell(creature, SPELL_AFFIX_BIG_BOY, true);
             break;
 
         case AFFIX_CC_IMMUNITY:
-            // Immune to all CC mechanics
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_STUN, true);
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_FEAR, true);
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_ROOT, true);
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_SLEEP, true);
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_SNARE, true);
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_FREEZE, true);
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_KNOCKOUT, true);
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_POLYMORPH, true);
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_BANISH, true);
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_SHACKLE, true);
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_TURN, true);
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_HORROR, true);
-            creature->ApplySpellImmune(0, IMMUNITY_MECHANIC, MECHANIC_SAPPED, true);
             creature->CastSpell(creature, SPELL_AFFIX_CC_IMMUNITY, true);
             break;
 
-        case AFFIX_SHARPENED_WEAPONS:
-            // +33% damage
-            creatureData->extraDamageMultiplier *= 1.33f;
+        case AFFIX_HEAVY_HITS:
+            creature->CastSpell(creature, SPELL_AFFIX_HEAVY_HITS, true);
             break;
 
         case AFFIX_BIGGER_BOY:
-            // Additional +50% HP, +10% damage
+            // +50% HP; size and damage handled by DBC aura
             creature->SetMaxHealth(static_cast<uint32>(creature->GetMaxHealth() * 1.5f));
             creature->SetFullHealth();
-            creatureData->extraDamageMultiplier *= 1.1f;
+            creature->CastSpell(creature, SPELL_AFFIX_BIGGER_BOY, true);
             break;
 
         case AFFIX_DAMAGE_REDUCE:
         {
             // Visual aura on the creature itself
-            creature->CastSpell(creature, SPELL_AFFIX_DAMAGE_REDUCE_AURA, true);
+            creature->CastSpell(creature, SPELL_AFFIX_DAMAGE_REDUCE, true);
             // Apply -25% incoming damage to all allies within 30y
             Map* map = creature->GetMap();
             if (map)
@@ -591,14 +575,19 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
         }
 
         case AFFIX_IMMOLATION:
-            // Visual aura; periodic damage handled in OnAllCreatureUpdate
-            creature->CastSpell(creature, SPELL_AFFIX_IMMOLATION_VISUAL, true);
+            creature->CastSpell(creature, SPELL_AFFIX_IMMOLATION, true);
+            break;
+
+        case AFFIX_HELL_TOUCHED:
+            creature->CastSpell(creature, SPELL_AFFIX_HELL_TOUCHED, true);
             break;
 
         case AFFIX_CALL_FOR_HELP:
+            creature->CastSpell(creature, SPELL_AFFIX_CALL_FOR_HELP, true);
+            break;
+
         case AFFIX_LIL_BRO:
-        case AFFIX_HELL_TOUCHED:
-            // These are handled via event hooks in DungeonChallengeScripts.cpp
+            creature->CastSpell(creature, SPELL_AFFIX_LIL_BRO, true);
             break;
 
         default:
