@@ -110,16 +110,16 @@ void DungeonChallengeMgr::LoadAffixData()
 {
     _affixes.clear();
     _affixes = {
-        { AFFIX_BOLSTERING,  "Bolstering",  "Wenn ein Mob stirbt, erhalten nahestehende Verbuendete +20% Schaden und HP.", 2 },
-        { AFFIX_RAGING,      "Raging",      "Mobs unter 30% HP erhalten +50% Schaden (Enrage).", 2 },
-        { AFFIX_SANGUINE,    "Sanguine",    "Sterbende Mobs hinterlassen eine heilende Zone fuer andere Mobs.", 4 },
-        { AFFIX_NECROTIC,    "Necrotic",    "Nahkampfangriffe reduzieren die erhaltene Heilung (stackend).", 4 },
-        { AFFIX_BURSTING,    "Bursting",    "Mob-Tod verursacht AoE-Schaden an allen Spielern (stackend).", 7 },
-        { AFFIX_EXPLOSIVE,   "Explosive",   "Mobs spawnen periodisch explosive Kugeln.", 7 },
-        { AFFIX_FORTIFIED,   "Fortified",   "Mob hat +40% HP und +20% Schaden.", 2 },
-        { AFFIX_VOLCANIC,    "Volcanic",    "Spawnt Feuerzonen unter entfernten Spielern.", 10 },
-        { AFFIX_STORMING,    "Storming",    "Spawnt sich bewegende Tornados um den Mob.", 10 },
-        { AFFIX_INSPIRING,   "Inspiring",   "Nahestehende Verbuendete koennen nicht unterbrochen werden.", 14 },
+        { AFFIX_BOLSTERING,  "Bolstering",  "When a mob dies, nearby allies gain +20% damage and HP.", 2 },
+        { AFFIX_RAGING,      "Raging",      "Mobs below 30% HP gain +50% damage (enrage).", 2 },
+        { AFFIX_SANGUINE,    "Sanguine",    "Dying mobs leave a healing zone for other mobs.", 4 },
+        { AFFIX_NECROTIC,    "Necrotic",    "Melee attacks apply stacking healing reduction.", 4 },
+        { AFFIX_BURSTING,    "Bursting",    "Mob death causes AoE damage to all players (stacking).", 7 },
+        { AFFIX_EXPLOSIVE,   "Explosive",   "Mobs periodically spawn explosive orbs.", 7 },
+        { AFFIX_FORTIFIED,   "Fortified",   "Mob has +40% HP and +20% damage.", 2 },
+        { AFFIX_VOLCANIC,    "Volcanic",    "Spawns fire zones under ranged players.", 10 },
+        { AFFIX_STORMING,    "Storming",    "Spawns moving tornadoes around the mob.", 10 },
+        { AFFIX_INSPIRING,   "Inspiring",   "Nearby allies cannot be interrupted.", 14 },
     };
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} affixes.", _affixes.size());
@@ -762,17 +762,17 @@ void DungeonChallengeMgr::DistributeRewards(ChallengeRun const* run)
         if (inTime)
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cff00ff00[Dungeon Challenge]|r Herausforderung abgeschlossen! "
-                "Stufe: |cffff8000{}|r | Zeit: |cff00ff00{}:{:02}|r (Strafe: +{}s) | Tode: {} | "
-                "Belohnung: |cffffcc00{} Gold|r",
+                "|cff00ff00[Dungeon Challenge]|r Challenge completed! "
+                "Level: |cffff8000{}|r | Time: |cff00ff00{}:{:02}|r (Penalty: +{}s) | Deaths: {} | "
+                "Reward: |cffffcc00{} Gold|r",
                 run->difficulty, minutes, seconds, run->penaltyTime, run->deathCount, goldReward / 10000);
         }
         else
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Herausforderung ueber der Zeit abgeschlossen! "
-                "Stufe: |cffff8000{}|r | Zeit: |cffff0000{}:{:02}|r (Strafe: +{}s) | Tode: {} | "
-                "Belohnung: |cffffcc00{} Gold|r",
+                "|cffff0000[Dungeon Challenge]|r Challenge completed over time! "
+                "Level: |cffff8000{}|r | Time: |cffff0000{}:{:02}|r (Penalty: +{}s) | Deaths: {} | "
+                "Reward: |cffffcc00{} Gold|r",
                 run->difficulty, minutes, seconds, run->penaltyTime, run->deathCount, goldReward / 10000);
         }
     }

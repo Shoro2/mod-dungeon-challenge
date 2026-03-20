@@ -45,13 +45,13 @@ public:
             return;
 
         ChatHandler(player->GetSession()).PSendSysMessage(
-            "|cff00ff00[Dungeon Challenge]|r Modul aktiv! Sprich mit dem "
-            "|cffff8000Dungeon Challenge NPC|r um eine Herausforderung zu starten.");
+            "|cff00ff00[Dungeon Challenge]|r Module active! Talk to the "
+            "|cffff8000Dungeon Challenge NPC|r to start a challenge.");
 
         if (sDungeonChallengeMgr->IsKeystoneEnabled())
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cff00ff00[Dungeon Challenge]|r Nutze den |cffff8000Schluesselstein|r im Dungeon, um den Run zu aktivieren!");
+                "|cff00ff00[Dungeon Challenge]|r Use the |cffff8000Keystone|r inside the dungeon to activate the run!");
         }
     }
 
@@ -84,8 +84,8 @@ public:
         if (sDungeonChallengeMgr->IsInstanceLocked(map))
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Diese Instanz ist gesperrt! "
-                "Es wurden bereits Kreaturen getoetet, bevor eine Challenge gestartet wurde.");
+                "|cffff0000[Dungeon Challenge]|r This instance is locked! "
+                "Creatures were already killed before a challenge was started.");
             sDungeonChallengePending->RemovePending(leaderGuid);
             return;
         }
@@ -110,10 +110,10 @@ public:
                 if (Player* member = ref->GetSource())
                 {
                     DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
-                    std::string dungeonName = info ? info->name : "Unbekannt";
+                    std::string dungeonName = info ? info->name : "Unknown";
                     ChatHandler(member->GetSession()).PSendSysMessage(
-                        "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Stufe |cffff8000{}|r vorbereitet! "
-                        "Benutze den |cffff8000Schluesselstein|r um den Timer zu starten!",
+                        "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Level |cffff8000{}|r prepared! "
+                        "Use the |cffff8000Keystone|r to start the timer!",
                         dungeonName, run->difficulty);
                 }
             }
@@ -129,11 +129,11 @@ public:
                 if (Player* member = ref->GetSource())
                 {
                     DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
-                    std::string dungeonName = info ? info->name : "Unbekannt";
+                    std::string dungeonName = info ? info->name : "Unknown";
                     ChatHandler(member->GetSession()).PSendSysMessage(
-                        "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Stufe |cffff8000{}|r gestartet! "
-                        "Timer: |cffffff00{} Minuten|r | Bosse: |cff00ff00{}|r | "
-                        "~5%% der Mobs haben zufaellige Affixe!",
+                        "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Level |cffff8000{}|r started! "
+                        "Timer: |cffffff00{} minutes|r | Bosses: |cff00ff00{}|r | "
+                        "~5%% of mobs have random affixes!",
                         dungeonName, run->difficulty, run->timerDuration / 60, run->totalBosses);
                 }
             }
@@ -167,8 +167,8 @@ public:
                 if (Player* member = ref->GetSource())
                 {
                     ChatHandler(member->GetSession()).PSendSysMessage(
-                        "|cffff0000[Dungeon Challenge]|r |cff69ccf0{}|r ist gestorben! "
-                        "(Tode: {}, +{}s Zeitstrafe, Gesamt-Strafe: {}s)",
+                        "|cffff0000[Dungeon Challenge]|r |cff69ccf0{}|r has died! "
+                        "(Deaths: {}, +{}s time penalty, Total penalty: {}s)",
                         player->GetName(), run->deathCount,
                         sDungeonChallengeMgr->GetDeathPenalty(), run->penaltyTime);
                 }
@@ -225,7 +225,7 @@ public:
                     if (Player* player = ref.GetSource())
                     {
                         ChatHandler(player->GetSession()).PSendSysMessage(
-                            "|cffff8000[Affix: Raging]|r |cffff0000{}|r wird wuetend! (+50%% Schaden)",
+                            "|cffff8000[Affix: Raging]|r |cffff0000{}|r is enraged! (+50%% damage)",
                             creature->GetName());
                     }
                 }
@@ -275,8 +275,8 @@ public:
                     if (Player* player = ref.GetSource())
                     {
                         ChatHandler(player->GetSession()).PSendSysMessage(
-                            "|cffff0000[Dungeon Challenge]|r Kreatur getoetet ohne aktive Challenge! "
-                            "Diese Instanz kann nicht mehr fuer eine Challenge verwendet werden.");
+                            "|cffff0000[Dungeon Challenge]|r Creature killed without active challenge! "
+                            "This instance can no longer be used for a challenge.");
                     }
                 }
             }
@@ -301,7 +301,7 @@ public:
                 if (Player* player = ref.GetSource())
                 {
                     ChatHandler(player->GetSession()).PSendSysMessage(
-                        "|cff00ff00[Dungeon Challenge]|r Boss |cffff8000{}|r besiegt! ({}/{})",
+                        "|cff00ff00[Dungeon Challenge]|r Boss |cffff8000{}|r defeated! ({}/{})",
                         bossName, run->bossesKilled, run->totalBosses);
                 }
             }
@@ -370,7 +370,7 @@ private:
             if (Player* player = ref.GetSource())
             {
                 ChatHandler(player->GetSession()).PSendSysMessage(
-                    "|cffff8000[Affix: Bolstering]|r Nahestehende Mobs wurden verstaerkt! (+20%%)");
+                    "|cffff8000[Affix: Bolstering]|r Nearby mobs have been empowered! (+20%%)");
             }
         }
     }
@@ -389,7 +389,7 @@ private:
                 player->EnvironmentalDamage(DAMAGE_FIRE, damage);
 
                 ChatHandler(player->GetSession()).PSendSysMessage(
-                    "|cffff8000[Affix: Bursting]|r AoE-Schaden: |cffff0000-{}|r HP!",
+                    "|cffff8000[Affix: Bursting]|r AoE damage: |cffff0000-{}|r HP!",
                     damage);
             }
         }
@@ -419,7 +419,7 @@ private:
             if (Player* player = ref.GetSource())
             {
                 ChatHandler(player->GetSession()).PSendSysMessage(
-                    "|cffff8000[Affix: Sanguine]|r Heilende Zone! Nahestehende Mobs werden geheilt!");
+                    "|cffff8000[Affix: Sanguine]|r Healing zone! Nearby mobs are being healed!");
             }
         }
     }
@@ -548,7 +548,7 @@ public:
         if (!sDungeonChallengeMgr->IsEnabled() || !sDungeonChallengeMgr->IsKeystoneEnabled())
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Schluesselsteine sind derzeit deaktiviert.");
+                "|cffff0000[Dungeon Challenge]|r Keystones are currently disabled.");
             return true;
         }
 
@@ -556,7 +556,7 @@ public:
         if (!map || !map->IsDungeon())
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Du musst dich in einem Dungeon befinden!");
+                "|cffff0000[Dungeon Challenge]|r You must be inside a dungeon!");
             return true;
         }
 
@@ -564,7 +564,7 @@ public:
         if (!sDungeonChallengeMgr->IsDungeonCapable(map->GetId()))
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Dieser Dungeon unterstuetzt keine Challenges!");
+                "|cffff0000[Dungeon Challenge]|r This dungeon does not support challenges!");
             return true;
         }
 
@@ -572,7 +572,7 @@ public:
         if (sDungeonChallengeMgr->IsInstanceLocked(map))
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Diese Instanz ist gesperrt! Kreaturen wurden bereits getoetet.");
+                "|cffff0000[Dungeon Challenge]|r This instance is locked! Creatures were already killed.");
             return true;
         }
 
@@ -581,14 +581,14 @@ public:
         if (!group)
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Du musst in einer Gruppe sein!");
+                "|cffff0000[Dungeon Challenge]|r You must be in a group!");
             return true;
         }
 
         if (group->GetLeaderGUID() != player->GetGUID())
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Nur der Gruppenleiter kann den Schluesselstein benutzen!");
+                "|cffff0000[Dungeon Challenge]|r Only the group leader can use the keystone!");
             return true;
         }
 
@@ -597,7 +597,7 @@ public:
         if (run && run->state == CHALLENGE_STATE_RUNNING)
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Es laeuft bereits eine Challenge in dieser Instanz!");
+                "|cffff0000[Dungeon Challenge]|r A challenge is already running in this instance!");
             return true;
         }
 
@@ -605,7 +605,7 @@ public:
         if (player->IsInCombat())
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Du darfst nicht im Kampf sein!");
+                "|cffff0000[Dungeon Challenge]|r You must not be in combat!");
             return true;
         }
 
@@ -616,7 +616,7 @@ public:
             if (!member || !member->IsInWorld())
             {
                 ChatHandler(player->GetSession()).PSendSysMessage(
-                    "|cffff0000[Dungeon Challenge]|r Alle Gruppenmitglieder muessen online sein!");
+                    "|cffff0000[Dungeon Challenge]|r All group members must be online!");
                 return true;
             }
         }
@@ -640,8 +640,8 @@ public:
                 if (Player* member = ref->GetSource())
                 {
                     ChatHandler(member->GetSession()).PSendSysMessage(
-                        "|cff00ff00[Dungeon Challenge]|r Schluesselstein aktiviert! "
-                        "Die Challenge startet in |cffff8000{} Sekunden|r!",
+                        "|cff00ff00[Dungeon Challenge]|r Keystone activated! "
+                        "The challenge starts in |cffff8000{} seconds|r!",
                         KEYSTONE_START_DELAY);
                 }
             }
@@ -649,8 +649,8 @@ public:
         else
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Keine vorbereitete Challenge gefunden. "
-                "Sprich zuerst mit dem |cffff8000Dungeon Challenge NPC|r!");
+                "|cffff0000[Dungeon Challenge]|r No prepared challenge found. "
+                "Talk to the |cffff8000Dungeon Challenge NPC|r first!");
         }
 
         return true;
@@ -720,8 +720,8 @@ public:
                 if (Player* player = ref.GetSource())
                 {
                     ChatHandler(player->GetSession()).PSendSysMessage(
-                        "|cffff0000[Dungeon Challenge]|r Die Zeit ist abgelaufen! "
-                        "Ihr koennt den Dungeon noch abschliessen, aber ohne Zeitbonus.");
+                        "|cffff0000[Dungeon Challenge]|r Time is up! "
+                        "You can still finish the dungeon, but without time bonus.");
                 }
             }
         }
@@ -735,8 +735,8 @@ public:
                 if (Player* player = ref.GetSource())
                 {
                     ChatHandler(player->GetSession()).PSendSysMessage(
-                        "|cff00ff00[Dungeon Challenge]|r Verbleibende Zeit: {}{}:{:02}|r "
-                        "(Strafe: +{}s) | Bosse: {}/{} | Tode: {}",
+                        "|cff00ff00[Dungeon Challenge]|r Time remaining: {}{}:{:02}|r "
+                        "(Penalty: +{}s) | Bosses: {}/{} | Deaths: {}",
                         color, remaining / 60, remaining % 60,
                         run->penaltyTime, run->bossesKilled, run->totalBosses, run->deathCount);
                 }
@@ -779,7 +779,7 @@ private:
                         if (Player* player = ref.GetSource())
                         {
                             ChatHandler(player->GetSession()).PSendSysMessage(
-                                "|cff00ff00[Dungeon Challenge]|r Challenge startet in |cffff8000{}|r...",
+                                "|cff00ff00[Dungeon Challenge]|r Challenge starts in |cffff8000{}|r...",
                                 run->countdownTimer);
                         }
                     }
@@ -799,11 +799,11 @@ private:
                     if (Player* player = ref.GetSource())
                     {
                         DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
-                        std::string dungeonName = info ? info->name : "Unbekannt";
+                        std::string dungeonName = info ? info->name : "Unknown";
                         ChatHandler(player->GetSession()).PSendSysMessage(
                             "|cff00ff00[Dungeon Challenge]|r |cffff8000GO!|r "
-                            "|cffff8000{}|r Stufe |cffff8000{}|r - Timer laeuft! "
-                            "({} Minuten, {} Bosse)",
+                            "|cffff8000{}|r Level |cffff8000{}|r - Timer running! "
+                            "({} minutes, {} bosses)",
                             dungeonName, run->difficulty, run->timerDuration / 60, run->totalBosses);
                     }
                 }

@@ -10,7 +10,7 @@ SET @NPC_ENTRY := 500000;
 
 DELETE FROM `creature_template` WHERE `entry` = @NPC_ENTRY;
 INSERT INTO `creature_template` (`entry`, `name`, `subname`, `IconName`, `gossip_menu_id`, `minlevel`, `maxlevel`, `faction`, `npcflag`, `unit_class`, `unit_flags`, `type`, `type_flags`, `ScriptName`) VALUES
-(@NPC_ENTRY, 'Dungeon Challenge', 'Herausforderungsmeister', 'Interact', 0, 80, 80, 35, 1, 1, 2, 7, 0, 'npc_dungeon_challenge');
+(@NPC_ENTRY, 'Dungeon Challenge', 'Challenge Master', 'Interact', 0, 80, 80, 35, 1, 1, 2, 7, 0, 'npc_dungeon_challenge');
 
 -- Model: Use a fitting humanoid model (Khadgar-style)
 DELETE FROM `creature_template_model` WHERE `CreatureID` = @NPC_ENTRY;
@@ -25,7 +25,7 @@ SET @KEYSTONE_ENTRY := 500001;
 
 DELETE FROM `item_template` WHERE `entry` = @KEYSTONE_ENTRY;
 INSERT INTO `item_template` (`entry`, `class`, `subclass`, `name`, `displayid`, `Quality`, `Flags`, `BuyCount`, `BuyPrice`, `SellPrice`, `InventoryType`, `AllowableClass`, `AllowableRace`, `ItemLevel`, `RequiredLevel`, `maxcount`, `stackable`, `bonding`, `description`, `ScriptName`) VALUES
-(@KEYSTONE_ENTRY, 12, 0, 'Dungeon Challenge Schluesselstein', 6266, 4, 64, 1, 0, 0, 0, -1, -1, 80, 80, 1, 1, 1, 'Benutze diesen Schluesselstein im Dungeon um eine vorbereitete Challenge zu aktivieren.', 'dungeon_challenge_keystone');
+(@KEYSTONE_ENTRY, 12, 0, 'Dungeon Challenge Keystone', 6266, 4, 64, 1, 0, 0, 0, -1, -1, 80, 80, 1, 1, 1, 'Use this keystone inside a dungeon to activate a prepared challenge.', 'dungeon_challenge_keystone');
 
 -- ============================================================================
 -- Dungeon Challenge Dungeons Table
