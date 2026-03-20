@@ -136,7 +136,7 @@ struct ChallengeRun
     ObjectGuid leaderGuid;
     std::unordered_set<ObjectGuid> participants;
     std::unordered_set<ObjectGuid> affixedCreatures;  // creatures that got affixes
-    std::unordered_map<ObjectGuid, DungeonChallengeAffix> creatureAffixes;
+    std::unordered_map<ObjectGuid, std::vector<DungeonChallengeAffix>> creatureAffixes;
 
     bool IsTimedOut() const
     {
@@ -173,9 +173,17 @@ struct CreatureChallengeData : public DataMap::Base
     bool processed = false;                // already scaled for difficulty
     uint32 originalHealth = 0;             // health before scaling
     float extraDamageMultiplier = 1.0f;    // stored damage multiplier for UnitScript hooks
-    DungeonChallengeAffix affix = AFFIX_NONE;
+    std::vector<DungeonChallengeAffix> affixes;  // all assigned affixes
     bool hasEnraged = false;               // for RAGING affix tracking
     bool isCopy = false;                   // for MULTIPLE_ENEMIES affix
+
+    bool HasAffix(DungeonChallengeAffix a) const
+    {
+        for (auto const& af : affixes)
+            if (af == a)
+                return true;
+        return false;
+    }
 };
 
 // ============================================================================

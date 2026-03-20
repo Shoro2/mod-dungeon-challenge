@@ -19,28 +19,29 @@ AIO.AddAddon("lua_scripts/Dungeon_Challenge/dungeon_challenge_ui.lua", "DChallen
 local GO_ENTRY = 500002
 
 local CONFIG = {
-    MAX_DIFFICULTY          = 20,
+    MAX_DIFFICULTY          = 100,
     HP_MULT_PER_LEVEL       = 0.15,
     DMG_MULT_PER_LEVEL      = 0.08,
     DEATH_PENALTY_SECONDS   = 15,
-    AFFIX_PERCENTAGE        = 5,
+    AFFIX_PERCENTAGE        = 10,
 }
 
 -- ============================================================================
 -- Affix Data
 -- ============================================================================
 
+-- Every 10 levels adds +1 affix. Selected mobs receive ALL available affixes.
 local AFFIXES = {
-    { id = 1,  name = "Bolstering",  desc = "On death: nearby allies gain +20% HP/DMG", minDiff = 2  },
-    { id = 2,  name = "Raging",      desc = "Below 30% HP: +50% damage",                minDiff = 2  },
-    { id = 3,  name = "Sanguine",    desc = "On death: heals nearby mobs by 20%",       minDiff = 4  },
-    { id = 4,  name = "Necrotic",    desc = "Melee: stacking healing reduction",         minDiff = 4  },
-    { id = 5,  name = "Bursting",    desc = "On death: 5% MaxHP AoE to all players",    minDiff = 7  },
-    { id = 6,  name = "Explosive",   desc = "Spawns explosive orbs periodically",       minDiff = 7  },
-    { id = 7,  name = "Fortified",   desc = "+40% HP, +20% damage",                     minDiff = 2  },
-    { id = 8,  name = "Volcanic",    desc = "Fire zones under ranged players",           minDiff = 10 },
-    { id = 9,  name = "Storming",    desc = "Moving tornadoes",                          minDiff = 10 },
-    { id = 10, name = "Inspiring",   desc = "Allies immune to CC/interrupt",             minDiff = 14 },
+    { id = 7,  name = "Fortified",   desc = "+40% HP, +20% damage",                     minDiff = 1  },
+    { id = 1,  name = "Bolstering",  desc = "On death: nearby allies gain +20% HP/DMG", minDiff = 10 },
+    { id = 2,  name = "Raging",      desc = "Below 30% HP: +50% damage",                minDiff = 20 },
+    { id = 3,  name = "Sanguine",    desc = "On death: heals nearby mobs by 20%",       minDiff = 30 },
+    { id = 5,  name = "Bursting",    desc = "On death: 5% MaxHP AoE to all players",    minDiff = 40 },
+    { id = 4,  name = "Necrotic",    desc = "Melee: stacking healing reduction",         minDiff = 50 },
+    { id = 6,  name = "Explosive",   desc = "Spawns explosive orbs periodically",       minDiff = 60 },
+    { id = 8,  name = "Volcanic",    desc = "Fire zones under ranged players",           minDiff = 70 },
+    { id = 9,  name = "Storming",    desc = "Moving tornadoes",                          minDiff = 80 },
+    { id = 10, name = "Inspiring",   desc = "Allies immune to CC/interrupt",             minDiff = 90 },
 }
 
 -- ============================================================================

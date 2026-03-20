@@ -4,7 +4,7 @@ Technical documentation for AI assistants working on this module.
 
 ## Module Overview
 
-**mod-dungeon-challenge** is an AzerothCore 3.3.5a module that implements a Mythic+-style dungeon challenge system. Players click a **Dungeon Challenge Stone** (GameObject) to select a dungeon and difficulty level (1-20) via a **Lua gossip UI**, are teleported (solo or group), and must defeat all bosses within a timer. ~5% of dungeon mobs receive random affixes (special abilities/modifiers).
+**mod-dungeon-challenge** is an AzerothCore 3.3.5a module that implements a Mythic+-style dungeon challenge system. Players click a **Dungeon Challenge Stone** (GameObject) to select a dungeon and difficulty level (1-100) via a **Lua gossip UI**, are teleported (solo or group), and must defeat all bosses within a timer. ~10% of dungeon mobs receive ALL available affixes for the current difficulty level (every 10 levels adds +1 affix to the pool).
 
 **Key design decisions:**
 - **Solo entry supported** — no group required, 1-5 players
@@ -137,8 +137,8 @@ AllBossesKilled()
 | Config Key | Default | Description |
 |------------|---------|-------------|
 | `DungeonChallenge.Enable` | 1 | Module on/off |
-| `DungeonChallenge.AffixPercentage` | 5 | % of mobs with affixes |
-| `DungeonChallenge.MaxDifficulty` | 20 | Maximum difficulty level |
+| `DungeonChallenge.AffixPercentage` | 10 | % of mobs with ALL available affixes |
+| `DungeonChallenge.MaxDifficulty` | 100 | Maximum difficulty level (every 10 levels +1 affix) |
 | `DungeonChallenge.HealthMultiplierPerLevel` | 15 | +HP% per level |
 | `DungeonChallenge.DamageMultiplierPerLevel` | 8 | +DMG% per level (via UnitScript hooks) |
 | `DungeonChallenge.TimerBaseMinutes` | 30 | Base timer (fallback) |
@@ -152,12 +152,12 @@ AllBossesKilled()
 
 ```
 HP Multiplier = 1.0 + (HealthMultiplierPerLevel/100 × Level)
-  Level 1:  1.15x  |  Level 5:  1.75x  |  Level 10: 2.50x  |  Level 20: 4.00x
+  Level 1:  1.15x  |  Level 10: 2.50x  |  Level 50: 8.50x  |  Level 100: 16.00x
 
 DMG Multiplier = 1.0 + (DamageMultiplierPerLevel/100 × Level)
   Via UnitScript hooks (ModifyMeleeDamage, ModifySpellDamageTaken, ModifyPeriodicDamageAurasTick)
   Stored in CreatureChallengeData::extraDamageMultiplier
-  Level 1:  1.08x  |  Level 5:  1.40x  |  Level 10: 1.80x  |  Level 20: 2.60x
+  Level 1:  1.08x  |  Level 10: 1.80x  |  Level 50: 5.00x  |  Level 100: 9.00x
 
 Spell Override: dungeon_challenge_spell_override table
   modPct = Direct Damage Modifier (-1 = no override)
@@ -175,26 +175,28 @@ Timer penalty per death: +DeathPenaltySeconds (Default: 15s)
 
 ### Available Affixes
 
+Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available affixes.
+
 | ID | Name | Effect | Min Level |
 |----|------|--------|-----------|
-| 1 | Bolstering | Death: Nearby allies gain +20% HP/DMG (via DataMap) | 2 |
-| 2 | Raging | Below 30% HP: +50% DMG (via extraDamageMultiplier) | 2 |
-| 3 | Sanguine | Death: Heals nearby mobs by 20% | 4 |
-| 4 | Necrotic | Melee: Stacking healing reduction | 4 |
-| 5 | Bursting | Death: 5% MaxHP AoE to all players | 7 |
-| 6 | Explosive | Spawns explosive orbs (periodic) | 7 |
-| 7 | Fortified | +40% HP, +20% DMG (via extraDamageMultiplier) | 2 |
-| 8 | Volcanic | Fire zones under ranged players | 10 |
-| 9 | Storming | Moving tornadoes | 10 |
-| 10 | Inspiring | Allies immune to CC/interrupt | 14 |
+| 7 | Fortified | +40% HP, +20% DMG (via extraDamageMultiplier) | 1 |
+| 1 | Bolstering | Death: Nearby allies gain +20% HP/DMG (via DataMap) | 10 |
+| 2 | Raging | Below 30% HP: +50% DMG (via extraDamageMultiplier) | 20 |
+| 3 | Sanguine | Death: Heals nearby mobs by 20% | 30 |
+| 5 | Bursting | Death: 5% MaxHP AoE to all players | 40 |
+| 4 | Necrotic | Melee: Stacking healing reduction | 50 |
+| 6 | Explosive | Spawns explosive orbs (periodic) | 60 |
+| 8 | Volcanic | Fire zones under ranged players | 70 |
+| 9 | Storming | Moving tornadoes | 80 |
+| 10 | Inspiring | Allies immune to CC/interrupt | 90 |
 
 ### Affix Assignment
 
 1. Collect all living, non-boss, non-friendly creatures in the dungeon
-2. Calculate count: `max(1, totalCreatures × affixPercentage / 100)`
-3. Shuffle-and-pick: Random selection + random affix from available pool
-4. Affix is only chosen from affixes whose `minDifficulty ≤ current level`
-5. Affix is stored in `CreatureChallengeData::affix` (DataMap)
+2. Calculate count: `max(1, totalCreatures × affixPercentage / 100)` (default 10%)
+3. Shuffle-and-pick: Random selection of which mobs get affixed
+4. ALL affixes whose `minDifficulty ≤ current level` are assigned to each selected mob
+5. Affixes are stored in `CreatureChallengeData::affixes` vector (DataMap)
 
 ### Implemented Affix Effects
 

@@ -17,8 +17,8 @@ DungeonChallengeMgr* DungeonChallengeMgr::Instance()
 
 DungeonChallengeMgr::DungeonChallengeMgr()
     : _enabled(true)
-    , _affixPercentage(5)
-    , _maxDifficulty(20)
+    , _affixPercentage(10)
+    , _maxDifficulty(100)
     , _healthMultPerLevel(0.15f)
     , _damageMultPerLevel(0.08f)
     , _timerBaseMinutes(30)
@@ -38,8 +38,8 @@ DungeonChallengeMgr::DungeonChallengeMgr()
 void DungeonChallengeMgr::LoadConfig(bool /*reload*/)
 {
     _enabled = sConfigMgr->GetOption<bool>("DungeonChallenge.Enable", true);
-    _affixPercentage = sConfigMgr->GetOption<uint32>("DungeonChallenge.AffixPercentage", 5);
-    _maxDifficulty = sConfigMgr->GetOption<uint32>("DungeonChallenge.MaxDifficulty", 20);
+    _affixPercentage = sConfigMgr->GetOption<uint32>("DungeonChallenge.AffixPercentage", 10);
+    _maxDifficulty = sConfigMgr->GetOption<uint32>("DungeonChallenge.MaxDifficulty", 100);
     _healthMultPerLevel = sConfigMgr->GetOption<float>("DungeonChallenge.HealthMultiplierPerLevel", 15.0f) / 100.0f;
     _damageMultPerLevel = sConfigMgr->GetOption<float>("DungeonChallenge.DamageMultiplierPerLevel", 8.0f) / 100.0f;
     _timerBaseMinutes = sConfigMgr->GetOption<uint32>("DungeonChallenge.TimerBaseMinutes", 30);
@@ -107,17 +107,19 @@ void DungeonChallengeMgr::LoadDungeonData()
 void DungeonChallengeMgr::LoadAffixData()
 {
     _affixes.clear();
+    // Every 10 levels adds +1 affix to the pool.
+    // Selected mobs receive ALL available affixes for the current difficulty.
     _affixes = {
-        { AFFIX_BOLSTERING,  "Bolstering",  "When a mob dies, nearby allies gain +20% damage and HP.", 2 },
-        { AFFIX_RAGING,      "Raging",      "Mobs below 30% HP gain +50% damage (enrage).", 2 },
-        { AFFIX_SANGUINE,    "Sanguine",    "Dying mobs leave a healing zone for other mobs.", 4 },
-        { AFFIX_NECROTIC,    "Necrotic",    "Melee attacks apply stacking healing reduction.", 4 },
-        { AFFIX_BURSTING,    "Bursting",    "Mob death causes AoE damage to all players (stacking).", 7 },
-        { AFFIX_EXPLOSIVE,   "Explosive",   "Mobs periodically spawn explosive orbs.", 7 },
-        { AFFIX_FORTIFIED,   "Fortified",   "Mob has +40% HP and +20% damage.", 2 },
-        { AFFIX_VOLCANIC,    "Volcanic",    "Spawns fire zones under ranged players.", 10 },
-        { AFFIX_STORMING,    "Storming",    "Spawns moving tornadoes around the mob.", 10 },
-        { AFFIX_INSPIRING,   "Inspiring",   "Nearby allies cannot be interrupted.", 14 },
+        { AFFIX_FORTIFIED,   "Fortified",   "Mob has +40% HP and +20% damage.", 1  },
+        { AFFIX_BOLSTERING,  "Bolstering",  "When a mob dies, nearby allies gain +20% damage and HP.", 10 },
+        { AFFIX_RAGING,      "Raging",      "Mobs below 30% HP gain +50% damage (enrage).", 20 },
+        { AFFIX_SANGUINE,    "Sanguine",    "Dying mobs leave a healing zone for other mobs.", 30 },
+        { AFFIX_BURSTING,    "Bursting",    "Mob death causes AoE damage to all players (stacking).", 40 },
+        { AFFIX_NECROTIC,    "Necrotic",    "Melee attacks apply stacking healing reduction.", 50 },
+        { AFFIX_EXPLOSIVE,   "Explosive",   "Mobs periodically spawn explosive orbs.", 60 },
+        { AFFIX_VOLCANIC,    "Volcanic",    "Spawns fire zones under ranged players.", 70 },
+        { AFFIX_STORMING,    "Storming",    "Spawns moving tornadoes around the mob.", 80 },
+        { AFFIX_INSPIRING,   "Inspiring",   "Nearby allies cannot be interrupted.", 90 },
     };
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} affixes.", _affixes.size());
@@ -485,28 +487,31 @@ void DungeonChallengeMgr::AssignAffixesToCreatures(ChallengeRun* run, Map* map)
 
     // Shuffle and pick
     std::shuffle(candidates.begin(), candidates.end(), _rng);
-    std::uniform_int_distribution<size_t> affixDist(0, availableAffixes.size() - 1);
 
     for (uint32 i = 0; i < affixCount && i < candidates.size(); ++i)
     {
         Creature* creature = candidates[i];
-        DungeonChallengeAffix affix = availableAffixes[affixDist(_rng)];
 
         run->affixedCreatures.insert(creature->GetGUID());
-        run->creatureAffixes[creature->GetGUID()] = affix;
+        run->creatureAffixes[creature->GetGUID()] = availableAffixes;
 
-        // Store affix in creature DataMap
+        // Store ALL available affixes in creature DataMap
         auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
-        creatureData->affix = affix;
+        creatureData->affixes = availableAffixes;
 
-        ApplyAffixToCreature(creature, affix, run->difficulty);
+        // Apply each affix to the creature
+        for (auto const& affix : availableAffixes)
+            ApplyAffixToCreature(creature, affix, run->difficulty);
+
+        // Scale creature stats for difficulty (once, after all affixes)
+        ScaleCreatureForDifficulty(creature, run->difficulty);
     }
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Assigned affixes to {}/{} creatures in instance {}.",
         affixCount, candidates.size(), run->instanceId);
 }
 
-void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChallengeAffix affix, uint32 difficulty)
+void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChallengeAffix affix, uint32 /*difficulty*/)
 {
     if (!creature)
         return;
@@ -520,7 +525,6 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
             // +40% HP, +20% damage
             creature->SetMaxHealth(creature->GetMaxHealth() * 1.4f);
             creature->SetFullHealth();
-            // Damage handled via UnitScript hooks using extraDamageMultiplier
             auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
             creatureData->extraDamageMultiplier *= 1.2f;
             break;
@@ -540,8 +544,8 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
             break;
     }
 
-    // Scale creature stats for difficulty level (stores multiplier in DataMap)
-    ScaleCreatureForDifficulty(creature, difficulty);
+    // NOTE: ScaleCreatureForDifficulty is called separately in AssignAffixesToCreatures
+    // after all affixes have been applied, so we don't call it here per-affix.
 
     if (info)
     {
