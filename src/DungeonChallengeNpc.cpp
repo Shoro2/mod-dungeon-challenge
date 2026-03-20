@@ -151,10 +151,6 @@ public:
                 AbandonCurrentRun(player, creature);
                 break;
 
-            case GOSSIP_ACTION_BUY_KEYSTONE:
-                BuyKeystone(player, creature);
-                break;
-
             case GOSSIP_ACTION_SNAPSHOTS:
                 ShowSnapshotMenu(player, creature);
                 break;
@@ -188,13 +184,6 @@ private:
         // Snapshots menu
         AddGossipItemFor(player, GOSSIP_ICON_INTERACT_1, "|TInterface\\Icons\\INV_Misc_Book_09:30:30|t Boss Kill Records",
             GOSSIP_ACTION_MAIN_MENU, GOSSIP_ACTION_SNAPSHOTS);
-
-        // Keystone purchase option
-        if (sDungeonChallengeMgr->IsKeystoneEnabled())
-        {
-            AddGossipItemFor(player, GOSSIP_ICON_VENDOR, "|TInterface\\Icons\\INV_Misc_Key_10:30:30|t Buy Keystone",
-                GOSSIP_ACTION_MAIN_MENU, GOSSIP_ACTION_BUY_KEYSTONE);
-        }
 
         // Show current run info if active
         if (player->GetMap() && player->GetMap()->IsDungeon())
@@ -309,11 +298,9 @@ private:
             "Timer: |cffffff00{} minutes|r\n"
             "Death Penalty: |cffff0000+{}s per death|r\n"
             "Affixes: |cffff8000{}|r\n\n"
-            "~5%% of mobs receive random affixes!{}",
+            "~5%% of mobs receive random affixes!",
             sel.selectedDungeonName, sel.selectedDifficulty, hpMult, dmgMult,
-            timer / 60, sDungeonChallengeMgr->GetDeathPenalty(), affixStr,
-            sDungeonChallengeMgr->IsKeystoneEnabled() ?
-                "\n|cffffff00Use keystone inside the dungeon to start!|r" : "");
+            timer / 60, sDungeonChallengeMgr->GetDeathPenalty(), affixStr);
 
         ChatHandler(player->GetSession()).PSendSysMessage("%s", confirmText.c_str());
 
@@ -351,25 +338,9 @@ private:
 
         auto& sel = it->second;
 
-        // Validation: Must be in a group
+        // Validation: Group must be max 5 man (if in group)
         Group* group = player->GetGroup();
-        if (!group)
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r You must be in a group!");
-            return;
-        }
-
-        // Validation: Must be group leader
-        if (group->GetLeaderGUID() != player->GetGUID())
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Only the group leader can start a challenge!");
-            return;
-        }
-
-        // Validation: Group must be 5 man
-        if (group->GetMembersCount() > 5)
+        if (group && group->GetMembersCount() > 5)
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
                 "|cffff0000[Dungeon Challenge]|r Maximum of 5 players allowed!");
@@ -385,30 +356,33 @@ private:
             return;
         }
 
-        // Announce to group
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        // Announce and teleport
+        if (group)
         {
-            if (Player* member = ref->GetSource())
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
             {
-                ChatHandler(member->GetSession()).PSendSysMessage(
-                    "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r started a challenge: "
-                    "|cff00ff00{}|r at Level |cffff8000{}|r!",
-                    player->GetName(), dungeonInfo->name, sel.selectedDifficulty);
-
-                ChatHandler(member->GetSession()).PSendSysMessage(
-                    "|cff00ff00[Dungeon Challenge]|r Teleporting in 5 seconds...");
+                if (Player* member = ref->GetSource())
+                {
+                    ChatHandler(member->GetSession()).PSendSysMessage(
+                        "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r started a challenge: "
+                        "|cff00ff00{}|r at Level |cffff8000{}|r! Teleporting...",
+                        player->GetName(), dungeonInfo->name, sel.selectedDifficulty);
+                    member->TeleportTo(sel.selectedMapId,
+                        dungeonInfo->entranceX, dungeonInfo->entranceY,
+                        dungeonInfo->entranceZ, dungeonInfo->entranceO);
+                }
             }
         }
-
-        // Teleport all group members to dungeon entrance
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        else
         {
-            if (Player* member = ref->GetSource())
-            {
-                member->TeleportTo(sel.selectedMapId,
-                    dungeonInfo->entranceX, dungeonInfo->entranceY,
-                    dungeonInfo->entranceZ, dungeonInfo->entranceO);
-            }
+            // Solo mode
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cff00ff00[Dungeon Challenge]|r Challenge started: "
+                "|cff00ff00{}|r at Level |cffff8000{}|r! Teleporting...",
+                dungeonInfo->name, sel.selectedDifficulty);
+            player->TeleportTo(sel.selectedMapId,
+                dungeonInfo->entranceX, dungeonInfo->entranceY,
+                dungeonInfo->entranceZ, dungeonInfo->entranceO);
         }
 
         // Store pending challenge info (will be picked up by OnPlayerMapChanged)
@@ -417,29 +391,6 @@ private:
 
         // Clean up selection
         _playerSelections.erase(player->GetGUID());
-    }
-
-    // ========================================================================
-    // Keystone Purchase
-    // ========================================================================
-
-    void BuyKeystone(Player* player, Creature* creature)
-    {
-        player->PlayerTalkClass->SendCloseGossip();
-
-        if (player->HasItemCount(KEYSTONE_ITEM_ENTRY, 1))
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r You already own a keystone!");
-            return;
-        }
-
-        // Add keystone item
-        player->AddItem(KEYSTONE_ITEM_ENTRY, 1);
-
-        ChatHandler(player->GetSession()).PSendSysMessage(
-            "|cff00ff00[Dungeon Challenge]|r You received a |cffff8000Keystone|r! "
-            "Use it inside the dungeon after preparing a challenge via the NPC.");
     }
 
     // ========================================================================

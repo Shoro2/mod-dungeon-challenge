@@ -24,9 +24,8 @@
 // Constants
 // ============================================================================
 
-constexpr uint32 KEYSTONE_ITEM_ENTRY        = 500001;
-constexpr uint32 KEYSTONE_START_DELAY       = 10;  // seconds countdown before run starts
-constexpr uint32 SNAPSHOT_RELOAD_INTERVAL   = 600000; // 10 minutes in ms
+constexpr uint32 CHALLENGE_GO_ENTRY          = 500002;  // default GameObject entry
+constexpr uint32 SNAPSHOT_RELOAD_INTERVAL    = 600000;  // 10 minutes in ms
 
 // ============================================================================
 // Affix Definitions
@@ -163,7 +162,6 @@ struct MapChallengeData : public DataMap::Base
 {
     ChallengeRun* run = nullptr;          // active challenge run (owned by DungeonChallengeMgr)
     bool isLockedNonChallenge = false;     // true if a creature was killed without a challenge active
-    bool keystoneUsed = false;             // true if keystone was used to start
 };
 
 // ============================================================================
@@ -221,7 +219,7 @@ public:
     float GetDamageMultiplier(uint32 difficulty) const;
     uint32 GetTimerForDungeon(uint32 mapId) const;
     uint32 GetDeathPenalty() const { return _deathPenaltySeconds; }
-    bool IsKeystoneEnabled() const { return _keystoneEnabled; }
+    uint32 GetGameObjectEntry() const { return _gameObjectEntry; }
 
     // Dungeon Info
     DungeonInfo const* GetDungeonInfo(uint32 mapId) const;
@@ -282,8 +280,7 @@ private:
     uint32 _npcEntry;
     bool _announceOnLogin;
     uint32 _deathPenaltySeconds;
-    bool _keystoneEnabled;
-    uint32 _keystoneBuyCooldownMinutes;
+    uint32 _gameObjectEntry;
 
     // Data
     std::vector<DungeonInfo> _dungeons;

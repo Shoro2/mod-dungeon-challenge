@@ -18,14 +18,16 @@ INSERT INTO `creature_template_model` (`CreatureID`, `Idx`, `CreatureDisplayID`,
 (@NPC_ENTRY, 0, 20925, 1.0, 1.0);
 
 -- ============================================================================
--- Keystone Item (Entry: 500001)
+-- Dungeon Challenge Stone (GameObject Entry: 500002)
+-- Clickable object that opens the Lua gossip UI for dungeon selection.
+-- displayId can be changed to any suitable model (6784 = portal stone).
 -- ============================================================================
 
-SET @KEYSTONE_ENTRY := 500001;
+SET @GO_ENTRY := 500002;
 
-DELETE FROM `item_template` WHERE `entry` = @KEYSTONE_ENTRY;
-INSERT INTO `item_template` (`entry`, `class`, `subclass`, `name`, `displayid`, `Quality`, `Flags`, `BuyCount`, `BuyPrice`, `SellPrice`, `InventoryType`, `AllowableClass`, `AllowableRace`, `ItemLevel`, `RequiredLevel`, `maxcount`, `stackable`, `bonding`, `description`, `ScriptName`) VALUES
-(@KEYSTONE_ENTRY, 12, 0, 'Dungeon Challenge Keystone', 6266, 4, 64, 1, 0, 0, 0, -1, -1, 80, 80, 1, 1, 1, 'Use this keystone inside a dungeon to activate a prepared challenge.', 'dungeon_challenge_keystone');
+DELETE FROM `gameobject_template` WHERE `entry` = @GO_ENTRY;
+INSERT INTO `gameobject_template` (`entry`, `type`, `displayId`, `name`, `IconName`, `castBarCaption`, `size`)
+VALUES (@GO_ENTRY, 2, 6784, 'Dungeon Challenge Stone', 'Interact', '', 1.5);
 
 -- ============================================================================
 -- Dungeon Challenge Dungeons Table

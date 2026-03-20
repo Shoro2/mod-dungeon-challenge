@@ -4,7 +4,6 @@
 #include "GameTime.h"
 #include "ScriptedGossip.h"
 #include "SpellAuraEffects.h"
-#include "Item.h"
 
 // ============================================================================
 // WorldScript - Configuration Loading & Startup
@@ -27,6 +26,10 @@ public:
         sDungeonChallengeMgr->LoadLeaderboard();
         sDungeonChallengeMgr->LoadSpellOverrides();
         sDungeonChallengeMgr->LoadSnapshots();
+
+        // Clean up stale pending challenges from previous sessions
+        CharacterDatabase.DirectExecute(
+            "DELETE FROM dungeon_challenge_pending WHERE created_at < DATE_SUB(NOW(), INTERVAL 5 MINUTE)");
     }
 };
 
@@ -45,14 +48,8 @@ public:
             return;
 
         ChatHandler(player->GetSession()).PSendSysMessage(
-            "|cff00ff00[Dungeon Challenge]|r Module active! Talk to the "
-            "|cffff8000Dungeon Challenge NPC|r to start a challenge.");
-
-        if (sDungeonChallengeMgr->IsKeystoneEnabled())
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cff00ff00[Dungeon Challenge]|r Use the |cffff8000Keystone|r inside the dungeon to activate the run!");
-        }
+            "|cff00ff00[Dungeon Challenge]|r Module active! Use the "
+            "|cffff8000Dungeon Challenge Stone|r to start a challenge.");
     }
 
     void OnPlayerMapChanged(Player* player) override
@@ -64,18 +61,47 @@ public:
         if (!map || !map->IsDungeon())
             return;
 
-        // Check if this player's group leader has a pending challenge
+        // Look for pending challenge data: first in-memory (NPC), then DB (Lua GameObject)
+        PendingChallengeInfo const* pending = nullptr;
+        PendingChallengeInfo dbPending;
+        bool fromDb = false;
+
+        // Check in-memory store (from NPC gossip)
+        pending = sDungeonChallengePending->GetPending(player->GetGUID());
+
+        // If player is in a group, also check under group leader GUID (backwards compat)
         Group* group = player->GetGroup();
-        if (!group)
-            return;
+        if (!pending && group)
+        {
+            ObjectGuid leaderGuid = group->GetLeaderGUID();
+            pending = sDungeonChallengePending->GetPending(leaderGuid);
+            // Only process when the leader enters
+            if (pending && player->GetGUID() != leaderGuid)
+                return;
+        }
 
-        ObjectGuid leaderGuid = group->GetLeaderGUID();
-        PendingChallengeInfo const* pending = sDungeonChallengePending->GetPending(leaderGuid);
+        // Check DB store (from Lua GameObject)
         if (!pending)
-            return;
+        {
+            QueryResult result = CharacterDatabase.Query(
+                "SELECT map_id, difficulty FROM dungeon_challenge_pending WHERE player_guid = {}",
+                player->GetGUID().GetCounter());
+            if (result)
+            {
+                Field* fields = result->Fetch();
+                dbPending.mapId = fields[0].Get<uint32>();
+                dbPending.difficulty = fields[1].Get<uint32>();
+                pending = &dbPending;
+                fromDb = true;
 
-        // Only process once: when the leader enters the instance
-        if (player->GetGUID() != leaderGuid)
+                // Clean up DB entry
+                CharacterDatabase.DirectExecute(
+                    "DELETE FROM dungeon_challenge_pending WHERE player_guid = {}",
+                    player->GetGUID().GetCounter());
+            }
+        }
+
+        if (!pending)
             return;
 
         uint32 instanceId = player->GetInstanceId();
@@ -86,7 +112,8 @@ public:
             ChatHandler(player->GetSession()).PSendSysMessage(
                 "|cffff0000[Dungeon Challenge]|r This instance is locked! "
                 "Creatures were already killed before a challenge was started.");
-            sDungeonChallengePending->RemovePending(leaderGuid);
+            if (!fromDb)
+                sDungeonChallengePending->RemovePending(player->GetGUID());
             return;
         }
 
@@ -96,50 +123,43 @@ public:
 
         if (!run)
         {
-            sDungeonChallengePending->RemovePending(leaderGuid);
+            if (!fromDb)
+                sDungeonChallengePending->RemovePending(player->GetGUID());
             return;
         }
 
-        // If keystone is enabled, set to countdown state (keystone must be used inside)
-        if (sDungeonChallengeMgr->IsKeystoneEnabled())
+        // Start immediately - assign affixes and start the run
+        sDungeonChallengeMgr->AssignAffixesToCreatures(run, map);
+        sDungeonChallengeMgr->StartRun(run);
+
+        DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
+        std::string dungeonName = info ? info->name : "Unknown";
+
+        // Notify all participants (group or solo)
+        auto notifyPlayer = [&](Player* p)
         {
-            run->state = CHALLENGE_STATE_PREPARING;
-            // Notify group that keystone is needed
+            ChatHandler(p->GetSession()).PSendSysMessage(
+                "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Level |cffff8000{}|r started! "
+                "Timer: |cffffff00{} minutes|r | Bosses: |cff00ff00{}|r | "
+                "~5%% of mobs have random affixes!",
+                dungeonName, run->difficulty, run->timerDuration / 60, run->totalBosses);
+        };
+
+        if (group)
+        {
             for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
             {
                 if (Player* member = ref->GetSource())
-                {
-                    DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
-                    std::string dungeonName = info ? info->name : "Unknown";
-                    ChatHandler(member->GetSession()).PSendSysMessage(
-                        "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Level |cffff8000{}|r prepared! "
-                        "Use the |cffff8000Keystone|r to start the timer!",
-                        dungeonName, run->difficulty);
-                }
+                    notifyPlayer(member);
             }
         }
         else
         {
-            // No keystone needed - start immediately
-            sDungeonChallengeMgr->AssignAffixesToCreatures(run, map);
-            sDungeonChallengeMgr->StartRun(run);
-
-            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
-            {
-                if (Player* member = ref->GetSource())
-                {
-                    DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
-                    std::string dungeonName = info ? info->name : "Unknown";
-                    ChatHandler(member->GetSession()).PSendSysMessage(
-                        "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Level |cffff8000{}|r started! "
-                        "Timer: |cffffff00{} minutes|r | Bosses: |cff00ff00{}|r | "
-                        "~5%% of mobs have random affixes!",
-                        dungeonName, run->difficulty, run->timerDuration / 60, run->totalBosses);
-                }
-            }
+            notifyPlayer(player);
         }
 
-        sDungeonChallengePending->RemovePending(leaderGuid);
+        if (!fromDb)
+            sDungeonChallengePending->RemovePending(player->GetGUID());
     }
 
     void OnPlayerJustDied(Player* player) override
@@ -158,21 +178,28 @@ public:
         run->deathCount++;
         run->penaltyTime += sDungeonChallengeMgr->GetDeathPenalty();
 
-        // Notify group
+        // Notify all participants (group or solo)
+        auto notifyDeath = [&](Player* p)
+        {
+            ChatHandler(p->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r |cff69ccf0{}|r has died! "
+                "(Deaths: {}, +{}s time penalty, Total penalty: {}s)",
+                player->GetName(), run->deathCount,
+                sDungeonChallengeMgr->GetDeathPenalty(), run->penaltyTime);
+        };
+
         Group* group = player->GetGroup();
         if (group)
         {
             for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
             {
                 if (Player* member = ref->GetSource())
-                {
-                    ChatHandler(member->GetSession()).PSendSysMessage(
-                        "|cffff0000[Dungeon Challenge]|r |cff69ccf0{}|r has died! "
-                        "(Deaths: {}, +{}s time penalty, Total penalty: {}s)",
-                        player->GetName(), run->deathCount,
-                        sDungeonChallengeMgr->GetDeathPenalty(), run->penaltyTime);
-                }
+                    notifyDeath(member);
             }
+        }
+        else
+        {
+            notifyDeath(player);
         }
     }
 };
@@ -535,129 +562,6 @@ public:
 };
 
 // ============================================================================
-// ItemScript - Keystone Item for Run Activation
-// ============================================================================
-
-class DungeonChallengeKeystoneScript : public ItemScript
-{
-public:
-    DungeonChallengeKeystoneScript() : ItemScript("dungeon_challenge_keystone") { }
-
-    bool OnUse(Player* player, Item* /*item*/, SpellCastTargets const& /*targets*/) override
-    {
-        if (!sDungeonChallengeMgr->IsEnabled() || !sDungeonChallengeMgr->IsKeystoneEnabled())
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Keystones are currently disabled.");
-            return true;
-        }
-
-        Map* map = player->GetMap();
-        if (!map || !map->IsDungeon())
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r You must be inside a dungeon!");
-            return true;
-        }
-
-        // Check if dungeon supports challenges
-        if (!sDungeonChallengeMgr->IsDungeonCapable(map->GetId()))
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r This dungeon does not support challenges!");
-            return true;
-        }
-
-        // Check if instance is locked
-        if (sDungeonChallengeMgr->IsInstanceLocked(map))
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r This instance is locked! Creatures were already killed.");
-            return true;
-        }
-
-        // Must be group leader
-        Group* group = player->GetGroup();
-        if (!group)
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r You must be in a group!");
-            return true;
-        }
-
-        if (group->GetLeaderGUID() != player->GetGUID())
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Only the group leader can use the keystone!");
-            return true;
-        }
-
-        // Check for existing run
-        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(map->GetInstanceId());
-        if (run && run->state == CHALLENGE_STATE_RUNNING)
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r A challenge is already running in this instance!");
-            return true;
-        }
-
-        // Player must not be in combat
-        if (player->IsInCombat())
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r You must not be in combat!");
-            return true;
-        }
-
-        // Validate all group members are online and max level
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
-        {
-            Player* member = ref->GetSource();
-            if (!member || !member->IsInWorld())
-            {
-                ChatHandler(player->GetSession()).PSendSysMessage(
-                    "|cffff0000[Dungeon Challenge]|r All group members must be online!");
-                return true;
-            }
-        }
-
-        // If run exists in PREPARING state, activate it
-        if (run && run->state == CHALLENGE_STATE_PREPARING)
-        {
-            // Start countdown
-            run->state = CHALLENGE_STATE_COUNTDOWN;
-            run->countdownTimer = KEYSTONE_START_DELAY;
-
-            auto* mapData = map->CustomData.GetDefault<MapChallengeData>("mod-dungeon-challenge");
-            mapData->keystoneUsed = true;
-
-            // Assign affixes now
-            sDungeonChallengeMgr->AssignAffixesToCreatures(run, map);
-
-            // Notify group about countdown
-            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
-            {
-                if (Player* member = ref->GetSource())
-                {
-                    ChatHandler(member->GetSession()).PSendSysMessage(
-                        "|cff00ff00[Dungeon Challenge]|r Keystone activated! "
-                        "The challenge starts in |cffff8000{} seconds|r!",
-                        KEYSTONE_START_DELAY);
-                }
-            }
-        }
-        else
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r No prepared challenge found. "
-                "Talk to the |cffff8000Dungeon Challenge NPC|r first!");
-        }
-
-        return true;
-    }
-};
-
-// ============================================================================
 // Timer & Countdown Script (AllMapScript)
 // ============================================================================
 
@@ -824,5 +728,4 @@ void AddSC_dungeon_challenge_scripts()
     new DungeonChallengeCreatureDeathScript();
     new DungeonChallengeTimerScript();
     new DungeonChallengeUnitScript();
-    new DungeonChallengeKeystoneScript();
 }

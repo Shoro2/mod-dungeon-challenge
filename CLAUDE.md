@@ -4,7 +4,13 @@ Technical documentation for AI assistants working on this module.
 
 ## Module Overview
 
-**mod-dungeon-challenge** is an AzerothCore 3.3.5a module that implements a Mythic+-style dungeon challenge system. Players select a dungeon and difficulty level (1-20) via NPC gossip, are teleported, and must defeat all bosses within a timer. ~5% of dungeon mobs receive random affixes (special abilities/modifiers).
+**mod-dungeon-challenge** is an AzerothCore 3.3.5a module that implements a Mythic+-style dungeon challenge system. Players click a **Dungeon Challenge Stone** (GameObject) to select a dungeon and difficulty level (1-20) via a **Lua gossip UI**, are teleported (solo or group), and must defeat all bosses within a timer. ~5% of dungeon mobs receive random affixes (special abilities/modifiers).
+
+**Key design decisions:**
+- **Solo entry supported** — no group required, 1-5 players
+- **GameObject + Lua UI** — interaction via clickable stone, gossip menus in Eluna Lua
+- **No keystone item** — challenges start immediately on dungeon entry
+- **Lua ↔ C++ communication** — via `dungeon_challenge_pending` DB table
 
 ## Architecture
 
@@ -18,14 +24,16 @@ mod-dungeon-challenge/
 │   └── mod_dungeon_challenge.conf.dist         # Configuration template
 ├── data/sql/
 │   ├── db-world/
-│   │   └── 00_dungeon_challenge_world.sql      # NPC, dungeon table, keystone, spell overrides
+│   │   └── 00_dungeon_challenge_world.sql      # NPC, GameObject, dungeon table, spell overrides
 │   └── db-characters/
-│       └── 00_dungeon_challenge_characters.sql  # Leaderboard, history, snapshots
+│       └── 00_dungeon_challenge_characters.sql  # Leaderboard, history, snapshots, pending
+├── lua_scripts/
+│   └── dungeon_challenge_gameobject.lua        # Eluna Lua UI for GameObject gossip
 ├── src/
 │   ├── DungeonChallenge.h                      # Header: All data structures + manager + DataMap
 │   ├── DungeonChallenge.cpp                    # Singleton manager implementation
-│   ├── DungeonChallengeNpc.cpp                 # NPC gossip menus (CreatureScript)
-│   ├── DungeonChallengeScripts.cpp             # Hooks: WorldScript, PlayerScript, CreatureScript, UnitScript, ItemScript
+│   ├── DungeonChallengeNpc.cpp                 # NPC gossip menus (CreatureScript, fallback)
+│   ├── DungeonChallengeScripts.cpp             # Hooks: WorldScript, PlayerScript, CreatureScript, UnitScript
 │   └── mod_dungeon_challenge_loader.cpp        # Entry point
 ├── CLAUDE.md                                   # This document
 └── README.md                                   # User guide
@@ -37,73 +45,73 @@ mod-dungeon-challenge/
 |--------------|------|---------|
 | `DungeonChallengeMgr` | DungeonChallenge.h/cpp | Singleton manager: config, runs, affixes, leaderboard, snapshots, spell overrides |
 | `ChallengeRun` | DungeonChallenge.h | State of an active run (timer, bosses, deaths, penalty) |
-| `MapChallengeData` | DungeonChallenge.h | DataMap::Base for Map instances (run reference, non-mythic lock, keystone status) |
+| `MapChallengeData` | DungeonChallenge.h | DataMap::Base for Map instances (run reference, non-mythic lock) |
 | `CreatureChallengeData` | DungeonChallenge.h | DataMap::Base for Creatures (processed, originalHealth, damageMultiplier, affix) |
 | `SpellOverrideEntry` | DungeonChallenge.h | Per-spell damage tuning via DB |
 | `BossKillSnapshot` | DungeonChallenge.h | Detailed boss kill record for leaderboards |
 | `DungeonInfo` | DungeonChallenge.h | Dungeon metadata (map, entrance, timer, boss count) |
 | `AffixInfo` | DungeonChallenge.h | Affix definition (name, description, min difficulty) |
 | `LeaderboardEntry` | DungeonChallenge.h | Leaderboard entry |
-| `DungeonChallengePendingStore` | DungeonChallenge.h | Stores pending challenges between NPC selection and teleport |
-| `npc_dungeon_challenge` | DungeonChallengeNpc.cpp | CreatureScript for the gossip NPC |
-| `DungeonChallengeWorldScript` | DungeonChallengeScripts.cpp | Config loading, startup |
-| `DungeonChallengePlayerScript` | DungeonChallengeScripts.cpp | Login, map change, death |
+| `DungeonChallengePendingStore` | DungeonChallenge.h | In-memory pending challenges (NPC fallback path) |
+| `npc_dungeon_challenge` | DungeonChallengeNpc.cpp | CreatureScript for the gossip NPC (fallback) |
+| `DungeonChallengeWorldScript` | DungeonChallengeScripts.cpp | Config loading, startup, pending cleanup |
+| `DungeonChallengePlayerScript` | DungeonChallengeScripts.cpp | Login, map change (solo+group), death |
 | `DungeonChallengeCreatureScript` | DungeonChallengeScripts.cpp | Creature update (Raging affix, DataMap processing) |
 | `DungeonChallengeCreatureDeathScript` | DungeonChallengeScripts.cpp | Creature death (boss kill, affixes, non-mythic lock, snapshots) |
 | `DungeonChallengeUnitScript` | DungeonChallengeScripts.cpp | Damage modification via UnitScript hooks |
-| `DungeonChallengeKeystoneScript` | DungeonChallengeScripts.cpp | ItemScript for keystone activation |
-| `DungeonChallengeTimerScript` | DungeonChallengeScripts.cpp | Timer display + keystone countdown (AllMapScript) |
+| `DungeonChallengeTimerScript` | DungeonChallengeScripts.cpp | Timer display (AllMapScript) |
+
+### Lua Script
+
+| File | Purpose |
+|------|---------|
+| `lua_scripts/dungeon_challenge_gameobject.lua` | Eluna script: GameObject gossip UI for dungeon/difficulty selection, leaderboard, snapshots. Communicates with C++ via `dungeon_challenge_pending` DB table. |
 
 ### Design Patterns
 
 1. **DataMap Pattern**: Custom data is attached to `Map` and `Creature` objects via `DataMap::Base`. `MapChallengeData` stores run reference and lock status. `CreatureChallengeData` stores processing status, original HP, damage multiplier, and affix.
 
-2. **UnitScript Damage Hooks**: Damage is no longer scaled by directly modifying base weapon damage, but via `ModifyMeleeDamage()`, `ModifySpellDamageTaken()`, and `ModifyPeriodicDamageAurasTick()` hooks. The `extraDamageMultiplier` is stored in `CreatureChallengeData`.
+2. **UnitScript Damage Hooks**: Damage scaling via `ModifyMeleeDamage()`, `ModifySpellDamageTaken()`, and `ModifyPeriodicDamageAurasTick()` hooks. The `extraDamageMultiplier` is stored in `CreatureChallengeData`.
 
 3. **Spell Override System**: Per-spell damage tuning via DB table `dungeon_challenge_spell_override`. Map-specific or global overrides (modPct for direct, dotModPct for DoTs).
 
-4. **Non-Mythic Lock**: If a creature dies before a keystone is activated, the instance is locked as "non-challenge". Prevents exploits with partially cleared dungeons.
+4. **Non-Mythic Lock**: If a creature dies before a challenge is active, the instance is locked as "non-challenge". Prevents exploits with partially cleared dungeons.
 
-5. **Keystone Item System**: Players buy a keystone from the NPC. After NPC selection and teleport, the keystone must be used inside the dungeon to start the 10-second countdown and then the timer.
+5. **Lua ↔ C++ Communication**: The Lua GameObject UI writes pending challenge data (player_guid, map_id, difficulty) to the `dungeon_challenge_pending` characters DB table. The C++ `OnPlayerMapChanged` hook reads and deletes this entry when the player enters the dungeon. Stale entries are cleaned up on server startup.
 
 6. **Snapshot-Based Records**: Each boss kill generates a detailed snapshot record per participant in the `dungeon_challenge_snapshot` table.
 
 ### Data Flow
 
 ```
-Player talks to NPC
+Player clicks Dungeon Challenge Stone (GameObject)
     ↓
-ShowMainMenu → ShowDungeonMenu → ShowDifficultyMenu → ShowConfirmMenu
+Lua: OnGossipHello → ShowMainMenu → ShowDungeonMenu → ShowDifficultyMenu → ShowConfirmMenu
     ↓
-StartChallengeRun()
-    ├─ Validation (group, leader, size)
-    ├─ sDungeonChallengePending->AddPending(leaderGuid, mapId, difficulty)
-    └─ TeleportTo() for all group members
+Lua: StartChallengeRun()
+    ├─ Validation (group size ≤ 5, optional)
+    ├─ INSERT INTO dungeon_challenge_pending (player_guid, map_id, difficulty)
+    └─ Teleport (solo or all group members)
     ↓
-OnPlayerMapChanged() (PlayerScript hook)
+C++: OnPlayerMapChanged() (PlayerScript hook)
+    ├─ Check in-memory pending (NPC fallback) OR DB pending (Lua path)
     ├─ Check non-mythic lock (IsInstanceLocked)
-    ├─ Check sDungeonChallengePending
     ├─ CreateChallengeRun() → ChallengeRun object + MapChallengeData link
-    └─ (Keystone enabled) State = PREPARING, waiting for keystone
-    ↓
-Keystone used (ItemScript)
-    ├─ Validation (leader, group, no combat, not locked)
-    ├─ State = COUNTDOWN (10 seconds)
     ├─ AssignAffixesToCreatures() → ~5% mobs get affixes + DataMap
-    └─ OnMapUpdate() counts down → StartRun()
+    └─ StartRun() immediately (State = RUNNING)
     ↓
 Dungeon running:
     ├─ OnAllCreatureUpdate() → ProcessCreature() via DataMap + Raging check
     ├─ ModifyMeleeDamage/ModifySpellDamageTaken → Damage via extraDamageMultiplier
-    ├─ OnAllCreatureJustDied() → Boss kill + snapshot + affix on-death + non-mythic lock
-    ├─ OnPlayerJustDied() → Death counter + penalty (configurable)
+    ├─ OnPlayerCreatureKill() → Boss kill + snapshot + affix on-death + non-mythic lock
+    ├─ OnPlayerJustDied() → Death counter + penalty (solo or group notification)
     └─ OnMapUpdate() → Timer display with penalty
     ↓
 AllBossesKilled()
     ├─ CompleteRun()
     ├─ SaveBossKillSnapshot() (final boss record)
     ├─ SaveRunToLeaderboard() + SaveHistory()
-    ├─ DistributeRewards() (gold + new keystone)
+    ├─ DistributeRewards() (gold)
     └─ OnDestroyInstance() → Cleanup
 ```
 
@@ -118,11 +126,10 @@ AllBossesKilled()
 | `DungeonChallenge.DamageMultiplierPerLevel` | 8 | +DMG% per level (via UnitScript hooks) |
 | `DungeonChallenge.TimerBaseMinutes` | 30 | Base timer (fallback) |
 | `DungeonChallenge.LootBonusPerLevel` | 50000 | Gold bonus per level (copper) |
-| `DungeonChallenge.NpcEntry` | 500000 | Creature entry of the NPC |
+| `DungeonChallenge.NpcEntry` | 500000 | Creature entry of the NPC (fallback) |
 | `DungeonChallenge.AnnounceOnLogin` | 1 | Login message |
 | `DungeonChallenge.DeathPenaltySeconds` | 15 | Time penalty per death (seconds) |
-| `DungeonChallenge.KeystoneEnabled` | 1 | Keystone system on/off |
-| `DungeonChallenge.KeystoneBuyCooldownMinutes` | 1440 | Purchase cooldown (minutes) |
+| `DungeonChallenge.GameObjectEntry` | 500002 | GameObject entry for the Dungeon Challenge Stone |
 
 ## Scaling Formulas
 
@@ -176,9 +183,9 @@ Timer penalty per death: +DeathPenaltySeconds (Default: 15s)
 
 - **Fortified**: On assignment: +40% HP directly, +20% via extraDamageMultiplier (UnitScript)
 - **Raging**: Per-tick check in `OnAllCreatureUpdate()` → hasEnraged flag + extraDamageMultiplier *= 1.5
-- **Bolstering**: In `OnAllCreatureJustDied()` → +20% HP + extraDamageMultiplier *= 1.2 via DataMap
-- **Bursting**: In `OnAllCreatureJustDied()` → `EnvironmentalDamage()` to all players
-- **Sanguine**: In `OnAllCreatureJustDied()` → `ModifyHealth()` on nearby mobs
+- **Bolstering**: In `OnPlayerCreatureKill()` → +20% HP + extraDamageMultiplier *= 1.2 via DataMap
+- **Bursting**: In `OnPlayerCreatureKill()` → `EnvironmentalDamage()` to all players
+- **Sanguine**: In `OnPlayerCreatureKill()` → `ModifyHealth()` on nearby mobs
 
 ### Not Yet Implemented Affixes (TODO)
 
@@ -196,8 +203,8 @@ Timer penalty per death: +DeathPenaltySeconds (Default: 15s)
 |-------|---------|
 | `dungeon_challenge_dungeons` | Dungeon definitions (MapID, entrance, timer, bosses) |
 | `dungeon_challenge_spell_override` | Per-spell damage tuning (spellId, mapId, modPct, dotModPct) |
-| `creature_template` (Entry 500000) | Challenge NPC |
-| `item_template` (Entry 500001) | Keystone item |
+| `creature_template` (Entry 500000) | Challenge NPC (fallback) |
+| `gameobject_template` (Entry 500002) | Dungeon Challenge Stone (primary interaction) |
 
 ### Characters DB
 
@@ -207,14 +214,15 @@ Timer penalty per death: +DeathPenaltySeconds (Default: 15s)
 | `dungeon_challenge_history` | All runs of a player |
 | `dungeon_challenge_best` | Aggregated best scores |
 | `dungeon_challenge_snapshot` | Boss kill records (per boss, per participant) |
+| `dungeon_challenge_pending` | Temporary: Lua→C++ challenge data transfer |
 
 ## IDs and Ranges
 
 | Type | ID/Range | Usage |
 |------|----------|-------|
-| NPC Entry | 500000 | Dungeon Challenge NPC |
-| Item Entry | 500001 | Dungeon Challenge Keystone |
-| Gossip Actions | 1000-5999 | Menu navigation |
+| NPC Entry | 500000 | Dungeon Challenge NPC (fallback) |
+| GameObject Entry | 500002 | Dungeon Challenge Stone (primary) |
+| Gossip Actions | 1000-5999 | Menu navigation (Lua + C++) |
 | Spell | 8599 | Enrage Visual (Raging affix) |
 | Maps | 574-668 | WotLK 5-man dungeons |
 
@@ -225,6 +233,7 @@ Timer penalty per death: +DeathPenaltySeconds (Default: 15s)
 - `UpperCamelCase` for classes and methods
 - `_lowerCamelCase` for private members
 - `UPPER_SNAKE_CASE` for enums/constants
+- Lua: `local` variables, `camelCase` functions, `UPPER_SNAKE_CASE` constants
 - Commit messages: Conventional Commits (feat/fix/docs)
 - Language: English for all code, comments, and user-facing strings
 
@@ -237,3 +246,4 @@ Timer penalty per death: +DeathPenaltySeconds (Default: 15s)
 5. **Creature Scaling**: `GetCreatureBySpawnIdStore()` must be verified against correct API
 6. **Instance Reset**: No automatic instance reset after run completion
 7. **Snapshot Reload**: Snapshots are loaded at startup but not periodically refreshed
+8. **Lua CONFIG sync**: Config values in Lua script must be manually kept in sync with worldserver.conf
