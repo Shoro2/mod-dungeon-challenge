@@ -12,12 +12,12 @@
 #       Default: 1 (enabled)
 #
 #   DungeonChallenge.AffixPercentage
-#       Percentage of mobs in a dungeon that receive random affixes
-#       Default: 5
+#       Percentage of mobs in a dungeon that receive ALL available affixes
+#       Default: 10
 #
 #   DungeonChallenge.MaxDifficulty
-#       Maximum difficulty level players can select
-#       Default: 20
+#       Maximum difficulty level players can select (100 levels, +1 affix every 10 levels)
+#       Default: 100
 #
 #   DungeonChallenge.HealthMultiplierPerLevel
 #       Health multiplier added per difficulty level (percentage)
@@ -57,8 +57,8 @@
 #
 
 DungeonChallenge.Enable = 1
-DungeonChallenge.AffixPercentage = 5
-DungeonChallenge.MaxDifficulty = 20
+DungeonChallenge.AffixPercentage = 10
+DungeonChallenge.MaxDifficulty = 100
 DungeonChallenge.HealthMultiplierPerLevel = 15
 DungeonChallenge.DamageMultiplierPerLevel = 8
 DungeonChallenge.TimerBaseMinutes = 30

@@ -35,21 +35,24 @@ local currentTab = "dungeons"
 -- ============================================================================
 
 local function DifficultyColor(diff)
-    if diff <= 5 then
+    if diff <= 20 then
         return 0.0, 1.0, 0.0
-    elseif diff <= 10 then
+    elseif diff <= 40 then
         return 1.0, 1.0, 0.0
-    elseif diff <= 15 then
+    elseif diff <= 60 then
         return 1.0, 0.5, 0.0
+    elseif diff <= 80 then
+        return 1.0, 0.2, 0.0
     else
         return 1.0, 0.0, 0.0
     end
 end
 
 local function DifficultyColorHex(diff)
-    if diff <= 5 then return "|cff00ff00"
-    elseif diff <= 10 then return "|cffffff00"
-    elseif diff <= 15 then return "|cffff8000"
+    if diff <= 20 then return "|cff00ff00"
+    elseif diff <= 40 then return "|cffffff00"
+    elseif diff <= 60 then return "|cffff8000"
+    elseif diff <= 80 then return "|cffff3300"
     else return "|cffff0000"
     end
 end
@@ -512,7 +515,7 @@ function ShowDifficultyPanel()
     editBox:SetFontObject(GameFontNormalLarge)
     editBox:SetAutoFocus(false)
     editBox:SetNumeric(true)
-    editBox:SetMaxLetters(2)
+    editBox:SetMaxLetters(3)
     editBox:SetBackdrop({
         bgFile = "Interface/Tooltips/UI-Tooltip-Background",
         edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
@@ -731,8 +734,8 @@ function ShowConfirmPanel()
 
     y = y - 10
     AddLabel(y, string.format(
-        "|cffaaaaaa~%d%% of dungeon mobs will receive random affixes!|r",
-        config.affixPercentage or 5))
+        "|cffaaaaaa~%d%% of dungeon mobs will receive ALL available affixes!|r",
+        config.affixPercentage or 10))
     y = y - 24
     AddDivider(y)
     y = y - 14

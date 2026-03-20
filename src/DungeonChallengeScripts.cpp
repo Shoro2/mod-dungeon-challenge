@@ -141,7 +141,7 @@ public:
             ChatHandler(p->GetSession()).PSendSysMessage(
                 "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Level |cffff8000{}|r started! "
                 "Timer: |cffffff00{} minutes|r | Bosses: |cff00ff00{}|r | "
-                "~5%% of mobs have random affixes!",
+                "~10%% of mobs have ALL available affixes!",
                 dungeonName, run->difficulty, run->timerDuration / 60, run->totalBosses);
         };
 
@@ -236,7 +236,7 @@ public:
             return;
 
         // Handle RAGING affix: enrage below 30% HP
-        if (creatureData->affix == AFFIX_RAGING && creature->IsAlive() && !creatureData->hasEnraged)
+        if (creatureData->HasAffix(AFFIX_RAGING) && creature->IsAlive() && !creatureData->hasEnraged)
         {
             if (creature->GetHealthPct() < 30.0f)
             {
@@ -343,26 +343,28 @@ public:
             }
         }
 
-        // Process affix on-death effects
+        // Process affix on-death effects (creature can have multiple affixes)
         auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
-        DungeonChallengeAffix affix = creatureData->affix;
 
-        if (affix == AFFIX_NONE)
+        if (creatureData->affixes.empty())
             return;
 
-        switch (affix)
+        for (auto const& affix : creatureData->affixes)
         {
-            case AFFIX_BOLSTERING:
-                HandleBolsteringDeath(creature, run, map);
-                break;
-            case AFFIX_BURSTING:
-                HandleBurstingDeath(creature, run, map);
-                break;
-            case AFFIX_SANGUINE:
-                HandleSanguineDeath(creature, run, map);
-                break;
-            default:
-                break;
+            switch (affix)
+            {
+                case AFFIX_BOLSTERING:
+                    HandleBolsteringDeath(creature, run, map);
+                    break;
+                case AFFIX_BURSTING:
+                    HandleBurstingDeath(creature, run, map);
+                    break;
+                case AFFIX_SANGUINE:
+                    HandleSanguineDeath(creature, run, map);
+                    break;
+                default:
+                    break;
+            }
         }
     }
 
