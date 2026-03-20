@@ -9,7 +9,8 @@
 local AIO = AIO or require("AIO")
 
 -- Register the client-side UI addon to be sent to players
-AIO.AddAddon("lua_scripts/dungeon_challenge_ui.lua", "DChallengeUI")
+-- Path is relative to worldserver.exe and must match the deployed location
+AIO.AddAddon("lua_scripts/Dungeon_Challenge/dungeon_challenge_ui.lua", "DChallengeUI")
 
 -- ============================================================================
 -- Configuration (must match worldserver.conf values)
