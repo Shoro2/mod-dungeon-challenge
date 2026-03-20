@@ -25,6 +25,9 @@ DungeonChallengeMgr::DungeonChallengeMgr()
     , _lootBonusPerLevel(50000)
     , _npcEntry(500000)
     , _announceOnLogin(true)
+    , _deathPenaltySeconds(15)
+    , _keystoneEnabled(true)
+    , _keystoneBuyCooldownMinutes(1440)
     , _rng(std::random_device{}())
 {
 }
@@ -44,9 +47,12 @@ void DungeonChallengeMgr::LoadConfig(bool /*reload*/)
     _lootBonusPerLevel = sConfigMgr->GetOption<uint32>("DungeonChallenge.LootBonusPerLevel", 50000);
     _npcEntry = sConfigMgr->GetOption<uint32>("DungeonChallenge.NpcEntry", 500000);
     _announceOnLogin = sConfigMgr->GetOption<bool>("DungeonChallenge.AnnounceOnLogin", true);
+    _deathPenaltySeconds = sConfigMgr->GetOption<uint32>("DungeonChallenge.DeathPenaltySeconds", 15);
+    _keystoneEnabled = sConfigMgr->GetOption<bool>("DungeonChallenge.KeystoneEnabled", true);
+    _keystoneBuyCooldownMinutes = sConfigMgr->GetOption<uint32>("DungeonChallenge.KeystoneBuyCooldownMinutes", 1440);
 
-    LOG_INFO("module", ">> mod-dungeon-challenge: Configuration loaded (Enabled: {}, MaxDifficulty: {}, AffixPct: {}%)",
-        _enabled ? "Yes" : "No", _maxDifficulty, _affixPercentage);
+    LOG_INFO("module", ">> mod-dungeon-challenge: Configuration loaded (Enabled: {}, MaxDifficulty: {}, AffixPct: {}%, Keystone: {})",
+        _enabled ? "Yes" : "No", _maxDifficulty, _affixPercentage, _keystoneEnabled ? "Yes" : "No");
 }
 
 void DungeonChallengeMgr::LoadDungeonData()
@@ -104,16 +110,16 @@ void DungeonChallengeMgr::LoadAffixData()
 {
     _affixes.clear();
     _affixes = {
-        { AFFIX_BOLSTERING,  "Bolstering",  "Wenn ein Mob stirbt, erhalten nahestehende Verbündete +20% Schaden und HP.", 2 },
+        { AFFIX_BOLSTERING,  "Bolstering",  "Wenn ein Mob stirbt, erhalten nahestehende Verbuendete +20% Schaden und HP.", 2 },
         { AFFIX_RAGING,      "Raging",      "Mobs unter 30% HP erhalten +50% Schaden (Enrage).", 2 },
-        { AFFIX_SANGUINE,    "Sanguine",    "Sterbende Mobs hinterlassen eine heilende Zone für andere Mobs.", 4 },
+        { AFFIX_SANGUINE,    "Sanguine",    "Sterbende Mobs hinterlassen eine heilende Zone fuer andere Mobs.", 4 },
         { AFFIX_NECROTIC,    "Necrotic",    "Nahkampfangriffe reduzieren die erhaltene Heilung (stackend).", 4 },
         { AFFIX_BURSTING,    "Bursting",    "Mob-Tod verursacht AoE-Schaden an allen Spielern (stackend).", 7 },
         { AFFIX_EXPLOSIVE,   "Explosive",   "Mobs spawnen periodisch explosive Kugeln.", 7 },
         { AFFIX_FORTIFIED,   "Fortified",   "Mob hat +40% HP und +20% Schaden.", 2 },
         { AFFIX_VOLCANIC,    "Volcanic",    "Spawnt Feuerzonen unter entfernten Spielern.", 10 },
         { AFFIX_STORMING,    "Storming",    "Spawnt sich bewegende Tornados um den Mob.", 10 },
-        { AFFIX_INSPIRING,   "Inspiring",   "Nahestehende Verbündete können nicht unterbrochen werden.", 14 },
+        { AFFIX_INSPIRING,   "Inspiring",   "Nahestehende Verbuendete koennen nicht unterbrochen werden.", 14 },
     };
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} affixes.", _affixes.size());
@@ -170,6 +176,78 @@ void DungeonChallengeMgr::LoadLeaderboard()
     LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} leaderboard entries.", count);
 }
 
+void DungeonChallengeMgr::LoadSpellOverrides()
+{
+    _spellOverrides.clear();
+
+    QueryResult result = WorldDatabase.Query(
+        "SELECT spell_id, map_id, mod_pct, dot_mod_pct FROM dungeon_challenge_spell_override");
+
+    if (!result)
+    {
+        LOG_INFO("module", ">> mod-dungeon-challenge: No spell overrides found.");
+        return;
+    }
+
+    uint32 count = 0;
+    do
+    {
+        Field* fields = result->Fetch();
+        SpellOverrideEntry entry;
+        entry.spellId   = fields[0].Get<uint32>();
+        entry.mapId     = fields[1].Get<uint32>();
+        entry.modPct    = fields[2].Get<float>();
+        entry.dotModPct = fields[3].Get<float>();
+        _spellOverrides.push_back(entry);
+        ++count;
+    } while (result->NextRow());
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} spell overrides.", count);
+}
+
+void DungeonChallengeMgr::LoadSnapshots()
+{
+    _snapshots.clear();
+
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT id, instance_id, map_id, difficulty, start_time, snap_time, timer_limit, "
+        "creature_entry, creature_name, is_final_boss, rewarded, deaths, penalty_time, "
+        "player_name, player_guid FROM dungeon_challenge_snapshot "
+        "ORDER BY map_id, difficulty, snap_time ASC");
+
+    if (!result)
+    {
+        LOG_INFO("module", ">> mod-dungeon-challenge: No snapshots found.");
+        return;
+    }
+
+    uint32 count = 0;
+    do
+    {
+        Field* fields = result->Fetch();
+        BossKillSnapshot snap;
+        snap.id             = fields[0].Get<uint32>();
+        snap.instanceId     = fields[1].Get<uint32>();
+        snap.mapId          = fields[2].Get<uint32>();
+        snap.difficulty     = fields[3].Get<uint32>();
+        snap.startTime      = fields[4].Get<uint32>();
+        snap.snapTime       = fields[5].Get<uint32>();
+        snap.timerLimit     = fields[6].Get<uint32>();
+        snap.creatureEntry  = fields[7].Get<uint32>();
+        snap.creatureName   = fields[8].Get<std::string>();
+        snap.isFinalBoss    = fields[9].Get<bool>();
+        snap.rewarded       = fields[10].Get<bool>();
+        snap.deaths         = fields[11].Get<uint32>();
+        snap.penaltyTime    = fields[12].Get<uint32>();
+        snap.playerName     = fields[13].Get<std::string>();
+        snap.playerGuid     = fields[14].Get<uint32>();
+        _snapshots[snap.mapId].push_back(snap);
+        ++count;
+    } while (result->NextRow());
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} boss kill snapshots.", count);
+}
+
 // ============================================================================
 // Getters
 // ============================================================================
@@ -200,6 +278,11 @@ DungeonInfo const* DungeonChallengeMgr::GetDungeonInfo(uint32 mapId) const
     return nullptr;
 }
 
+bool DungeonChallengeMgr::IsDungeonCapable(uint32 mapId) const
+{
+    return GetDungeonInfo(mapId) != nullptr;
+}
+
 AffixInfo const* DungeonChallengeMgr::GetAffixInfo(DungeonChallengeAffix affix) const
 {
     for (auto const& a : _affixes)
@@ -215,6 +298,19 @@ std::vector<DungeonChallengeAffix> DungeonChallengeMgr::GetAffixesForDifficulty(
         if (difficulty >= a.minDifficulty)
             result.push_back(a.id);
     return result;
+}
+
+SpellOverrideEntry const* DungeonChallengeMgr::GetSpellOverride(uint32 spellId, uint32 mapId) const
+{
+    // First try map-specific override
+    for (auto const& entry : _spellOverrides)
+        if (entry.spellId == spellId && entry.mapId == mapId)
+            return &entry;
+    // Then try global override (mapId = 0)
+    for (auto const& entry : _spellOverrides)
+        if (entry.spellId == spellId && entry.mapId == 0)
+            return &entry;
+    return nullptr;
 }
 
 // ============================================================================
@@ -240,7 +336,9 @@ ChallengeRun* DungeonChallengeMgr::CreateChallengeRun(uint32 instanceId, uint32 
     run.timerDuration = GetTimerForDungeon(mapId);
     run.elapsedTime  = 0;
     run.deathCount   = 0;
+    run.penaltyTime  = 0;
     run.leaderGuid   = leader->GetGUID();
+    run.countdownTimer = 0;
 
     DungeonInfo const* info = GetDungeonInfo(mapId);
     run.totalBosses  = info ? info->totalCreatures : 3; // totalCreatures here stores boss count
@@ -256,6 +354,15 @@ ChallengeRun* DungeonChallengeMgr::CreateChallengeRun(uint32 instanceId, uint32 
     }
 
     _activeRuns[instanceId] = run;
+
+    // Link run to MapChallengeData via DataMap
+    Map* map = leader->GetMap();
+    if (map)
+    {
+        auto* mapData = map->CustomData.GetDefault<MapChallengeData>("mod-dungeon-challenge");
+        mapData->run = &_activeRuns[instanceId];
+    }
+
     LOG_INFO("module", ">> mod-dungeon-challenge: Created challenge run for instance {} (map: {}, difficulty: {})",
         instanceId, mapId, difficulty);
 
@@ -269,7 +376,7 @@ void DungeonChallengeMgr::RemoveChallengeRun(uint32 instanceId)
 
 void DungeonChallengeMgr::StartRun(ChallengeRun* run)
 {
-    if (!run || run->state != CHALLENGE_STATE_PREPARING)
+    if (!run || (run->state != CHALLENGE_STATE_PREPARING && run->state != CHALLENGE_STATE_COUNTDOWN))
         return;
 
     run->state = CHALLENGE_STATE_RUNNING;
@@ -286,12 +393,6 @@ void DungeonChallengeMgr::UpdateRun(ChallengeRun* run, uint32 diff)
         return;
 
     run->elapsedTime = GameTime::GetGameTime().count() - run->startTime;
-
-    if (run->IsTimedOut())
-    {
-        // Don't auto-fail, just mark as over time
-        // Players can still complete, but won't get bonus rewards
-    }
 }
 
 void DungeonChallengeMgr::CompleteRun(ChallengeRun* run)
@@ -305,8 +406,8 @@ void DungeonChallengeMgr::CompleteRun(ChallengeRun* run)
     SaveRunToLeaderboard(run);
     DistributeRewards(run);
 
-    LOG_INFO("module", ">> mod-dungeon-challenge: Run completed! Instance: {}, Time: {}s, Deaths: {}",
-        run->instanceId, run->elapsedTime, run->deathCount);
+    LOG_INFO("module", ">> mod-dungeon-challenge: Run completed! Instance: {}, Time: {}s, Deaths: {}, Penalty: {}s",
+        run->instanceId, run->elapsedTime, run->deathCount, run->penaltyTime);
 }
 
 void DungeonChallengeMgr::FailRun(ChallengeRun* run)
@@ -316,6 +417,33 @@ void DungeonChallengeMgr::FailRun(ChallengeRun* run)
 
     run->state = CHALLENGE_STATE_FAILED;
     LOG_INFO("module", ">> mod-dungeon-challenge: Run failed for instance {}.", run->instanceId);
+}
+
+// ============================================================================
+// Creature Processing (DataMap-based)
+// ============================================================================
+
+void DungeonChallengeMgr::ProcessCreature(Creature* creature, Map* map)
+{
+    if (!creature || !map)
+        return;
+
+    auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+    if (creatureData->processed)
+        return;
+
+    auto* mapData = map->CustomData.GetDefault<MapChallengeData>("mod-dungeon-challenge");
+    if (!mapData->run || mapData->run->state != CHALLENGE_STATE_RUNNING)
+        return;
+
+    // Store original health before scaling
+    creatureData->originalHealth = creature->GetMaxHealth();
+
+    // Scale creature
+    ScaleCreatureForDifficulty(creature, mapData->run->difficulty);
+
+    // Mark as processed
+    creatureData->processed = true;
 }
 
 // ============================================================================
@@ -369,6 +497,10 @@ void DungeonChallengeMgr::AssignAffixesToCreatures(ChallengeRun* run, Map* map)
         run->affixedCreatures.insert(creature->GetGUID());
         run->creatureAffixes[creature->GetGUID()] = affix;
 
+        // Store affix in creature DataMap
+        auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+        creatureData->affix = affix;
+
         ApplyAffixToCreature(creature, affix, run->difficulty);
     }
 
@@ -381,24 +513,18 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
     if (!creature)
         return;
 
-    // Visual indicator: add a title/name suffix
     AffixInfo const* info = GetAffixInfo(affix);
 
-    // Apply affix-specific buffs
     switch (affix)
     {
         case AFFIX_FORTIFIED:
         {
             // +40% HP, +20% damage
-            float hpMult = 1.4f;
-            float dmgMult = 1.2f;
-            creature->SetMaxHealth(creature->GetMaxHealth() * hpMult);
+            creature->SetMaxHealth(creature->GetMaxHealth() * 1.4f);
             creature->SetFullHealth();
-            creature->SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE,
-                creature->GetWeaponDamageRange(BASE_ATTACK, MINDAMAGE) * dmgMult);
-            creature->SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE,
-                creature->GetWeaponDamageRange(BASE_ATTACK, MAXDAMAGE) * dmgMult);
-            creature->UpdateDamagePhysical(BASE_ATTACK);
+            // Damage handled via UnitScript hooks using extraDamageMultiplier
+            auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+            creatureData->extraDamageMultiplier *= 1.2f;
             break;
         }
         case AFFIX_BOLSTERING:
@@ -411,13 +537,12 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
         case AFFIX_STORMING:
         case AFFIX_INSPIRING:
             // These are handled via event hooks in the scripts
-            // Mark creature for the affix system
             break;
         default:
             break;
     }
 
-    // Scale creature stats for difficulty level
+    // Scale creature stats for difficulty level (stores multiplier in DataMap)
     ScaleCreatureForDifficulty(creature, difficulty);
 
     if (info)
@@ -435,14 +560,72 @@ void DungeonChallengeMgr::ScaleCreatureForDifficulty(Creature* creature, uint32 
     float hpMult = GetHealthMultiplier(difficulty);
     float dmgMult = GetDamageMultiplier(difficulty);
 
+    // Store original data and damage multiplier in DataMap
+    auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+    if (creatureData->originalHealth == 0)
+        creatureData->originalHealth = creature->GetMaxHealth();
+    creatureData->extraDamageMultiplier *= dmgMult;
+    creatureData->processed = true;
+
+    // Apply HP scaling directly
     creature->SetMaxHealth(creature->GetCreateHealth() * hpMult);
     creature->SetFullHealth();
 
-    creature->SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE,
-        creature->GetWeaponDamageRange(BASE_ATTACK, MINDAMAGE) * dmgMult);
-    creature->SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE,
-        creature->GetWeaponDamageRange(BASE_ATTACK, MAXDAMAGE) * dmgMult);
-    creature->UpdateDamagePhysical(BASE_ATTACK);
+    // Damage scaling is now handled via UnitScript hooks (ModifyMeleeDamage, ModifySpellDamageTaken)
+    // instead of modifying base weapon damage directly.
+    // The extraDamageMultiplier stored above is read by the UnitScript.
+}
+
+// ============================================================================
+// Snapshots
+// ============================================================================
+
+void DungeonChallengeMgr::SaveBossKillSnapshot(ChallengeRun const* run, Creature* boss, bool isFinalBoss, bool rewarded)
+{
+    if (!run || !boss)
+        return;
+
+    // Save one snapshot row per participant
+    for (auto const& guid : run->participants)
+    {
+        Player* player = ObjectAccessor::FindPlayer(guid);
+        std::string playerName = player ? player->GetName() : "Unknown";
+        uint32 playerGuidVal = guid.GetCounter();
+
+        CharacterDatabase.Execute(
+            "INSERT INTO `dungeon_challenge_snapshot` "
+            "(`instance_id`, `map_id`, `difficulty`, `start_time`, `snap_time`, `timer_limit`, "
+            "`creature_entry`, `creature_name`, `is_final_boss`, `rewarded`, `deaths`, `penalty_time`, "
+            "`player_name`, `player_guid`) VALUES ({}, {}, {}, {}, {}, {}, {}, '{}', {}, {}, {}, {}, '{}', {})",
+            run->instanceId, run->mapId, run->difficulty, run->startTime,
+            run->elapsedTime, run->timerDuration,
+            boss->GetEntry(), boss->GetName(),
+            isFinalBoss ? 1 : 0, rewarded ? 1 : 0,
+            run->deathCount, run->penaltyTime,
+            playerName, playerGuidVal);
+    }
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Saved boss kill snapshot for {} (entry: {}, final: {})",
+        boss->GetName(), boss->GetEntry(), isFinalBoss ? "yes" : "no");
+}
+
+std::vector<BossKillSnapshot> DungeonChallengeMgr::GetSnapshotsForDungeon(uint32 mapId, uint32 difficulty, uint32 limit) const
+{
+    std::vector<BossKillSnapshot> result;
+    auto it = _snapshots.find(mapId);
+    if (it == _snapshots.end())
+        return result;
+
+    uint32 count = 0;
+    for (auto const& snap : it->second)
+    {
+        if (difficulty > 0 && snap.difficulty != difficulty)
+            continue;
+        result.push_back(snap);
+        if (++count >= limit)
+            break;
+    }
+    return result;
 }
 
 // ============================================================================
@@ -474,8 +657,20 @@ void DungeonChallengeMgr::SaveRunToLeaderboard(ChallengeRun const* run)
         "INSERT INTO `dungeon_challenge_leaderboard` "
         "(`map_id`, `difficulty`, `completion_time`, `death_count`, `leader_name`, `leader_guid`, "
         "`date_completed`, `participants`) VALUES ({}, {}, {}, {}, '{}', {}, NOW(), '{}')",
-        run->mapId, run->difficulty, run->elapsedTime, run->deathCount,
+        run->mapId, run->difficulty, run->GetEffectiveElapsed(), run->deathCount,
         leaderName, run->leaderGuid.GetCounter(), participantStr);
+
+    // Also save to individual player history
+    bool inTime = !run->IsTimedOut();
+    for (auto const& guid : run->participants)
+    {
+        CharacterDatabase.Execute(
+            "INSERT INTO `dungeon_challenge_history` "
+            "(`player_guid`, `map_id`, `difficulty`, `completion_time`, `death_count`, `in_time`) "
+            "VALUES ({}, {}, {}, {}, {}, {})",
+            guid.GetCounter(), run->mapId, run->difficulty,
+            run->GetEffectiveElapsed(), run->deathCount, inTime ? 1 : 0);
+    }
 }
 
 std::vector<LeaderboardEntry> DungeonChallengeMgr::GetLeaderboard(uint32 mapId, uint32 difficulty, uint32 limit) const
@@ -552,25 +747,58 @@ void DungeonChallengeMgr::DistributeRewards(ChallengeRun const* run)
         // Gold reward
         player->ModifyMoney(goldReward);
 
+        // Drop a new keystone on completion if keystone is enabled
+        if (_keystoneEnabled)
+        {
+            if (!player->HasItemCount(KEYSTONE_ITEM_ENTRY, 1))
+                player->AddItem(KEYSTONE_ITEM_ENTRY, 1);
+        }
+
         // Announce to player
-        uint32 minutes = run->elapsedTime / 60;
-        uint32 seconds = run->elapsedTime % 60;
+        uint32 totalTime = run->GetEffectiveElapsed();
+        uint32 minutes = totalTime / 60;
+        uint32 seconds = totalTime % 60;
 
         if (inTime)
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
                 "|cff00ff00[Dungeon Challenge]|r Herausforderung abgeschlossen! "
-                "Stufe: |cffff8000{}|r | Zeit: |cff00ff00{}:{:02}|r | Tode: {} | "
+                "Stufe: |cffff8000{}|r | Zeit: |cff00ff00{}:{:02}|r (Strafe: +{}s) | Tode: {} | "
                 "Belohnung: |cffffcc00{} Gold|r",
-                run->difficulty, minutes, seconds, run->deathCount, goldReward / 10000);
+                run->difficulty, minutes, seconds, run->penaltyTime, run->deathCount, goldReward / 10000);
         }
         else
         {
             ChatHandler(player->GetSession()).PSendSysMessage(
                 "|cffff0000[Dungeon Challenge]|r Herausforderung ueber der Zeit abgeschlossen! "
-                "Stufe: |cffff8000{}|r | Zeit: |cffff0000{}:{:02}|r | Tode: {} | "
+                "Stufe: |cffff8000{}|r | Zeit: |cffff0000{}:{:02}|r (Strafe: +{}s) | Tode: {} | "
                 "Belohnung: |cffffcc00{} Gold|r",
-                run->difficulty, minutes, seconds, run->deathCount, goldReward / 10000);
+                run->difficulty, minutes, seconds, run->penaltyTime, run->deathCount, goldReward / 10000);
         }
     }
+}
+
+// ============================================================================
+// Non-Mythic Lock
+// ============================================================================
+
+void DungeonChallengeMgr::LockInstanceAsNonChallenge(Map* map)
+{
+    if (!map)
+        return;
+
+    auto* mapData = map->CustomData.GetDefault<MapChallengeData>("mod-dungeon-challenge");
+    mapData->isLockedNonChallenge = true;
+
+    LOG_DEBUG("module", ">> mod-dungeon-challenge: Instance {} locked as non-challenge (creature killed before keystone)",
+        map->GetInstanceId());
+}
+
+bool DungeonChallengeMgr::IsInstanceLocked(Map* map) const
+{
+    if (!map)
+        return false;
+
+    auto* mapData = map->CustomData.GetDefault<MapChallengeData>("mod-dungeon-challenge");
+    return mapData->isLockedNonChallenge;
 }

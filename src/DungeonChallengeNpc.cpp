@@ -19,11 +19,15 @@ enum DungeonChallengeGossip
     GOSSIP_ACTION_CURRENT_RUN_INFO  = 1600,
     GOSSIP_ACTION_ABANDON_RUN       = 1700,
     GOSSIP_ACTION_LEADERBOARD_DUNGEON = 1800,
+    GOSSIP_ACTION_BUY_KEYSTONE      = 1900,
+    GOSSIP_ACTION_SNAPSHOTS         = 1950,
+    GOSSIP_ACTION_SNAPSHOT_DUNGEON  = 1960,
 
     // Offsets
     GOSSIP_DUNGEON_OFFSET           = 2000,
     GOSSIP_DIFFICULTY_OFFSET        = 3000,
     GOSSIP_LEADERBOARD_OFFSET       = 4000,
+    GOSSIP_SNAPSHOT_OFFSET          = 5000,
 };
 
 // ============================================================================
@@ -92,12 +96,23 @@ public:
         }
 
         // Leaderboard Dungeon Selection
-        if (action >= GOSSIP_LEADERBOARD_OFFSET)
+        if (action >= GOSSIP_LEADERBOARD_OFFSET && action < GOSSIP_SNAPSHOT_OFFSET)
         {
             uint32 dungeonIndex = action - GOSSIP_LEADERBOARD_OFFSET;
             auto const& dungeons = sDungeonChallengeMgr->GetAllDungeons();
             if (dungeonIndex < dungeons.size())
                 ShowLeaderboardForDungeon(player, creature, dungeons[dungeonIndex].mapId,
+                    dungeons[dungeonIndex].name);
+            return true;
+        }
+
+        // Snapshot Dungeon Selection
+        if (action >= GOSSIP_SNAPSHOT_OFFSET)
+        {
+            uint32 dungeonIndex = action - GOSSIP_SNAPSHOT_OFFSET;
+            auto const& dungeons = sDungeonChallengeMgr->GetAllDungeons();
+            if (dungeonIndex < dungeons.size())
+                ShowSnapshotsForDungeon(player, creature, dungeons[dungeonIndex].mapId,
                     dungeons[dungeonIndex].name);
             return true;
         }
@@ -136,6 +151,14 @@ public:
                 AbandonCurrentRun(player, creature);
                 break;
 
+            case GOSSIP_ACTION_BUY_KEYSTONE:
+                BuyKeystone(player, creature);
+                break;
+
+            case GOSSIP_ACTION_SNAPSHOTS:
+                ShowSnapshotMenu(player, creature);
+                break;
+
             default:
                 ShowMainMenu(player, creature);
                 break;
@@ -162,11 +185,23 @@ private:
         AddGossipItemFor(player, GOSSIP_ICON_CHAT, "|TInterface\\Icons\\Achievement_BG_KillXEnemies_GeneralsRoom:30:30|t Meine besten Runs",
             GOSSIP_ACTION_MAIN_MENU, GOSSIP_ACTION_MY_RUNS);
 
+        // Snapshots menu
+        AddGossipItemFor(player, GOSSIP_ICON_INTERACT_1, "|TInterface\\Icons\\INV_Misc_Book_09:30:30|t Boss-Kill Aufzeichnungen",
+            GOSSIP_ACTION_MAIN_MENU, GOSSIP_ACTION_SNAPSHOTS);
+
+        // Keystone purchase option
+        if (sDungeonChallengeMgr->IsKeystoneEnabled())
+        {
+            AddGossipItemFor(player, GOSSIP_ICON_VENDOR, "|TInterface\\Icons\\INV_Misc_Key_10:30:30|t Schluesselstein kaufen",
+                GOSSIP_ACTION_MAIN_MENU, GOSSIP_ACTION_BUY_KEYSTONE);
+        }
+
         // Show current run info if active
         if (player->GetMap() && player->GetMap()->IsDungeon())
         {
             ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(player->GetInstanceId());
-            if (run && (run->state == CHALLENGE_STATE_RUNNING || run->state == CHALLENGE_STATE_PREPARING))
+            if (run && (run->state == CHALLENGE_STATE_RUNNING || run->state == CHALLENGE_STATE_PREPARING
+                || run->state == CHALLENGE_STATE_COUNTDOWN))
             {
                 AddGossipItemFor(player, GOSSIP_ICON_DOT, "|cff00ff00[AKTIV]|r Aktueller Run - Info",
                     GOSSIP_ACTION_MAIN_MENU, GOSSIP_ACTION_CURRENT_RUN_INFO);
@@ -207,12 +242,8 @@ private:
             return;
         }
 
-        std::string header = fmt::format("Dungeon: |cff00ff00{}|r\nWaehle die Schwierigkeitsstufe:",
-            it->second.selectedDungeonName);
-
         uint32 maxDiff = sDungeonChallengeMgr->GetMaxDifficulty();
 
-        // Show difficulties in groups of 5
         for (uint32 d = 1; d <= maxDiff; ++d)
         {
             float hpMult = sDungeonChallengeMgr->GetHealthMultiplier(d);
@@ -276,12 +307,14 @@ private:
             "HP: |cffff0000x{:.1f}|r\n"
             "Schaden: |cffff0000x{:.1f}|r\n"
             "Timer: |cffffff00{} Minuten|r\n"
+            "Tod-Strafe: |cffff0000+{}s pro Tod|r\n"
             "Affixe: |cffff8000{}|r\n\n"
-            "~5% der Mobs erhalten zufaellige Affixe!",
+            "~5%% der Mobs erhalten zufaellige Affixe!{}",
             sel.selectedDungeonName, sel.selectedDifficulty, hpMult, dmgMult,
-            timer / 60, affixStr);
+            timer / 60, sDungeonChallengeMgr->GetDeathPenalty(), affixStr,
+            sDungeonChallengeMgr->IsKeystoneEnabled() ?
+                "\n|cffffff00Schluesselstein im Dungeon benutzen um zu starten!|r" : "");
 
-        // Send as NPC text
         ChatHandler(player->GetSession()).PSendSysMessage("%s", confirmText.c_str());
 
         AddGossipItemFor(player, GOSSIP_ICON_BATTLE,
@@ -368,14 +401,6 @@ private:
         }
 
         // Teleport all group members to dungeon entrance
-        // We use a delayed approach: store the run data, teleport players
-        // The InstanceScript hook will then set up the challenge
-
-        // Store challenge data for the instance (keyed by leader GUID temporarily)
-        // Will be properly linked once instance is created
-        auto& pendingSel = _playerSelections[player->GetGUID()];
-
-        // Teleport group to dungeon
         for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
         {
             if (Player* member = ref->GetSource())
@@ -392,6 +417,29 @@ private:
 
         // Clean up selection
         _playerSelections.erase(player->GetGUID());
+    }
+
+    // ========================================================================
+    // Keystone Purchase
+    // ========================================================================
+
+    void BuyKeystone(Player* player, Creature* creature)
+    {
+        player->PlayerTalkClass->SendCloseGossip();
+
+        if (player->HasItemCount(KEYSTONE_ITEM_ENTRY, 1))
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Du besitzt bereits einen Schluesselstein!");
+            return;
+        }
+
+        // Add keystone item
+        player->AddItem(KEYSTONE_ITEM_ENTRY, 1);
+
+        ChatHandler(player->GetSession()).PSendSysMessage(
+            "|cff00ff00[Dungeon Challenge]|r Du hast einen |cffff8000Schluesselstein|r erhalten! "
+            "Benutze ihn im Dungeon, nachdem du eine Challenge ueber den NPC vorbereitet hast.");
     }
 
     // ========================================================================
@@ -480,6 +528,69 @@ private:
         SendGossipMenuFor(player, creature->GetEntry(), creature->GetGUID());
     }
 
+    // ========================================================================
+    // Snapshots (Boss Kill Records)
+    // ========================================================================
+
+    void ShowSnapshotMenu(Player* player, Creature* creature)
+    {
+        player->PlayerTalkClass->ClearMenus();
+
+        auto const& dungeons = sDungeonChallengeMgr->GetAllDungeons();
+        for (uint32 i = 0; i < dungeons.size(); ++i)
+        {
+            AddGossipItemFor(player, GOSSIP_ICON_INTERACT_1, dungeons[i].name,
+                GOSSIP_ACTION_SNAPSHOTS, GOSSIP_SNAPSHOT_OFFSET + i);
+        }
+
+        AddGossipItemFor(player, GOSSIP_ICON_CHAT, "<< Zurueck",
+            GOSSIP_ACTION_SNAPSHOTS, GOSSIP_ACTION_MAIN_MENU);
+        SendGossipMenuFor(player, creature->GetEntry(), creature->GetGUID());
+    }
+
+    void ShowSnapshotsForDungeon(Player* player, Creature* creature, uint32 mapId, std::string const& dungeonName)
+    {
+        player->PlayerTalkClass->ClearMenus();
+
+        auto snapshots = sDungeonChallengeMgr->GetSnapshotsForDungeon(mapId, 0, 20);
+
+        ChatHandler(player->GetSession()).PSendSysMessage(
+            "|cff00ff00[Dungeon Challenge]|r Boss-Kill Aufzeichnungen: |cffff8000{}|r", dungeonName);
+
+        if (snapshots.empty())
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "  Noch keine Aufzeichnungen vorhanden.");
+        }
+        else
+        {
+            for (auto const& snap : snapshots)
+            {
+                uint32 min = snap.snapTime / 60;
+                uint32 sec = snap.snapTime % 60;
+                std::string finalStr = snap.isFinalBoss ? " |cff00ff00[ENDBOSS]|r" : "";
+                std::string rewardStr = snap.rewarded ? " |cffffcc00[BELOHNT]|r" : "";
+
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "  Stufe |cffff8000{}|r - |cffff8000{}|r bei {}:{:02} | "
+                    "{} Tode (+{}s) | {} {}{}",
+                    snap.difficulty, snap.creatureName, min, sec,
+                    snap.deaths, snap.penaltyTime, snap.playerName,
+                    finalStr, rewardStr);
+            }
+        }
+
+        AddGossipItemFor(player, GOSSIP_ICON_CHAT, "<< Zurueck",
+            GOSSIP_ACTION_SNAPSHOT_DUNGEON, GOSSIP_ACTION_SNAPSHOTS);
+        AddGossipItemFor(player, GOSSIP_ICON_CHAT, "<< Hauptmenue",
+            GOSSIP_ACTION_SNAPSHOT_DUNGEON, GOSSIP_ACTION_MAIN_MENU);
+        SendGossipMenuFor(player, creature->GetEntry(), creature->GetGUID());
+    }
+
+    // ========================================================================
+    // Current Run Info & Abandon
+    // ========================================================================
+
     void ShowCurrentRunInfo(Player* player, Creature* creature)
     {
         player->PlayerTalkClass->ClearMenus();
@@ -498,18 +609,28 @@ private:
         DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
         std::string dungeonName = info ? info->name : "Unbekannt";
 
-        uint32 elapsed = run->elapsedTime;
-        uint32 remaining = run->timerDuration > elapsed ? run->timerDuration - elapsed : 0;
+        std::string stateStr;
+        switch (run->state)
+        {
+            case CHALLENGE_STATE_PREPARING: stateStr = "|cffffff00Vorbereitung (Schluesselstein benutzen!)|r"; break;
+            case CHALLENGE_STATE_COUNTDOWN: stateStr = fmt::format("|cffff8000Countdown ({}s)|r", run->countdownTimer); break;
+            case CHALLENGE_STATE_RUNNING:   stateStr = "|cff00ff00Laeuft|r"; break;
+            default:                        stateStr = "Unbekannt"; break;
+        }
+
+        uint32 effectiveElapsed = run->GetEffectiveElapsed();
+        uint32 remaining = run->timerDuration > effectiveElapsed ? run->timerDuration - effectiveElapsed : 0;
 
         ChatHandler(player->GetSession()).PSendSysMessage(
             "|cff00ff00[Dungeon Challenge]|r Aktueller Run:\n"
+            "  Status: {}\n"
             "  Dungeon: |cffff8000{}|r\n"
             "  Stufe: |cffff8000{}|r\n"
             "  Bosse: |cff00ff00{}/{}|r\n"
-            "  Tode: |cffff0000{}|r\n"
+            "  Tode: |cffff0000{}|r (Strafe: +{}s)\n"
             "  Verbleibend: |cffffff00{}:{:02}|r",
-            dungeonName, run->difficulty, run->bossesKilled, run->totalBosses,
-            run->deathCount, remaining / 60, remaining % 60);
+            stateStr, dungeonName, run->difficulty, run->bossesKilled, run->totalBosses,
+            run->deathCount, run->penaltyTime, remaining / 60, remaining % 60);
 
         AddGossipItemFor(player, GOSSIP_ICON_CHAT, "<< Zurueck",
             GOSSIP_ACTION_CURRENT_RUN_INFO, GOSSIP_ACTION_MAIN_MENU);
@@ -550,7 +671,6 @@ private:
 
         sDungeonChallengeMgr->RemoveChallengeRun(player->GetInstanceId());
     }
-
 };
 
 // ============================================================================

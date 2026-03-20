@@ -12,12 +12,21 @@
 #include "ObjectMgr.h"
 #include "SpellAuras.h"
 #include "SpellInfo.h"
+#include "DataMap.h"
 
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <string>
 #include <random>
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+constexpr uint32 KEYSTONE_ITEM_ENTRY        = 500001;
+constexpr uint32 KEYSTONE_START_DELAY       = 10;  // seconds countdown before run starts
+constexpr uint32 SNAPSHOT_RELOAD_INTERVAL   = 600000; // 10 minutes in ms
 
 // ============================================================================
 // Affix Definitions
@@ -62,6 +71,41 @@ struct DungeonInfo
 };
 
 // ============================================================================
+// Spell Override (per-spell damage tuning via DB)
+// ============================================================================
+
+struct SpellOverrideEntry
+{
+    uint32 spellId;
+    uint32 mapId;       // 0 = all maps
+    float modPct;       // direct damage modifier, -1 = no override
+    float dotModPct;    // DoT damage modifier, -1 = no override
+};
+
+// ============================================================================
+// Boss Kill Snapshot (detailed per-boss record)
+// ============================================================================
+
+struct BossKillSnapshot
+{
+    uint32 id;
+    uint32 instanceId;
+    uint32 mapId;
+    uint32 difficulty;
+    uint32 startTime;
+    uint32 snapTime;        // time when boss was killed (elapsed seconds)
+    uint32 timerLimit;
+    uint32 creatureEntry;
+    std::string creatureName;
+    bool isFinalBoss;
+    bool rewarded;
+    uint32 deaths;
+    uint32 penaltyTime;     // accumulated death penalty in seconds
+    std::string playerName;
+    uint32 playerGuid;
+};
+
+// ============================================================================
 // Challenge Run State
 // ============================================================================
 
@@ -69,10 +113,11 @@ enum ChallengeState : uint8
 {
     CHALLENGE_STATE_NONE        = 0,
     CHALLENGE_STATE_PREPARING   = 1,  // players selected difficulty, waiting to start
-    CHALLENGE_STATE_RUNNING     = 2,  // timer ticking, dungeon in progress
-    CHALLENGE_STATE_COMPLETED   = 3,  // all bosses killed, timer stopped
-    CHALLENGE_STATE_FAILED      = 4,  // all players dead or left
-    CHALLENGE_STATE_ABANDONED   = 5   // manually abandoned
+    CHALLENGE_STATE_COUNTDOWN   = 2,  // keystone used, countdown active
+    CHALLENGE_STATE_RUNNING     = 3,  // timer ticking, dungeon in progress
+    CHALLENGE_STATE_COMPLETED   = 4,  // all bosses killed, timer stopped
+    CHALLENGE_STATE_FAILED      = 5,  // all players dead or left
+    CHALLENGE_STATE_ABANDONED   = 6   // manually abandoned
 };
 
 struct ChallengeRun
@@ -85,8 +130,10 @@ struct ChallengeRun
     uint32 timerDuration;      // total allowed time in seconds
     uint32 elapsedTime;        // current elapsed seconds
     uint32 deathCount;
+    uint32 penaltyTime;        // accumulated death penalty in seconds
     uint32 totalBosses;
     uint32 bossesKilled;
+    uint32 countdownTimer;     // seconds remaining in countdown
     ObjectGuid leaderGuid;
     std::unordered_set<ObjectGuid> participants;
     std::unordered_set<ObjectGuid> affixedCreatures;  // creatures that got affixes
@@ -94,13 +141,43 @@ struct ChallengeRun
 
     bool IsTimedOut() const
     {
-        return elapsedTime >= timerDuration;
+        return (elapsedTime + penaltyTime) >= timerDuration;
     }
 
     bool AllBossesKilled() const
     {
         return bossesKilled >= totalBosses;
     }
+
+    uint32 GetEffectiveElapsed() const
+    {
+        return elapsedTime + penaltyTime;
+    }
+};
+
+// ============================================================================
+// DataMap: Custom data attached to Map instances
+// ============================================================================
+
+struct MapChallengeData : public DataMap::Base
+{
+    ChallengeRun* run = nullptr;          // active challenge run (owned by DungeonChallengeMgr)
+    bool isLockedNonChallenge = false;     // true if a creature was killed without a challenge active
+    bool keystoneUsed = false;             // true if keystone was used to start
+};
+
+// ============================================================================
+// DataMap: Custom data attached to Creature instances
+// ============================================================================
+
+struct CreatureChallengeData : public DataMap::Base
+{
+    bool processed = false;                // already scaled for difficulty
+    uint32 originalHealth = 0;             // health before scaling
+    float extraDamageMultiplier = 1.0f;    // stored damage multiplier for UnitScript hooks
+    DungeonChallengeAffix affix = AFFIX_NONE;
+    bool hasEnraged = false;               // for RAGING affix tracking
+    bool isCopy = false;                   // for MULTIPLE_ENEMIES affix
 };
 
 // ============================================================================
@@ -133,6 +210,8 @@ public:
     void LoadDungeonData();
     void LoadAffixData();
     void LoadLeaderboard();
+    void LoadSpellOverrides();
+    void LoadSnapshots();
 
     // Getters
     bool IsEnabled() const { return _enabled; }
@@ -141,15 +220,21 @@ public:
     float GetHealthMultiplier(uint32 difficulty) const;
     float GetDamageMultiplier(uint32 difficulty) const;
     uint32 GetTimerForDungeon(uint32 mapId) const;
+    uint32 GetDeathPenalty() const { return _deathPenaltySeconds; }
+    bool IsKeystoneEnabled() const { return _keystoneEnabled; }
 
     // Dungeon Info
     DungeonInfo const* GetDungeonInfo(uint32 mapId) const;
     std::vector<DungeonInfo> const& GetAllDungeons() const { return _dungeons; }
+    bool IsDungeonCapable(uint32 mapId) const;
 
     // Affix Info
     AffixInfo const* GetAffixInfo(DungeonChallengeAffix affix) const;
     std::vector<AffixInfo> const& GetAllAffixes() const { return _affixes; }
     std::vector<DungeonChallengeAffix> GetAffixesForDifficulty(uint32 difficulty) const;
+
+    // Spell Override
+    SpellOverrideEntry const* GetSpellOverride(uint32 spellId, uint32 mapId) const;
 
     // Challenge Run Management
     ChallengeRun* GetChallengeRun(uint32 instanceId);
@@ -164,6 +249,11 @@ public:
     void AssignAffixesToCreatures(ChallengeRun* run, Map* map);
     void ApplyAffixToCreature(Creature* creature, DungeonChallengeAffix affix, uint32 difficulty);
     void ScaleCreatureForDifficulty(Creature* creature, uint32 difficulty);
+    void ProcessCreature(Creature* creature, Map* map);
+
+    // Snapshots
+    void SaveBossKillSnapshot(ChallengeRun const* run, Creature* boss, bool isFinalBoss, bool rewarded);
+    std::vector<BossKillSnapshot> GetSnapshotsForDungeon(uint32 mapId, uint32 difficulty, uint32 limit = 20) const;
 
     // Leaderboard
     void SaveRunToLeaderboard(ChallengeRun const* run);
@@ -172,6 +262,10 @@ public:
 
     // Rewards
     void DistributeRewards(ChallengeRun const* run);
+
+    // Non-Mythic Lock
+    void LockInstanceAsNonChallenge(Map* map);
+    bool IsInstanceLocked(Map* map) const;
 
 private:
     DungeonChallengeMgr();
@@ -187,12 +281,18 @@ private:
     uint32 _lootBonusPerLevel;
     uint32 _npcEntry;
     bool _announceOnLogin;
+    uint32 _deathPenaltySeconds;
+    bool _keystoneEnabled;
+    uint32 _keystoneBuyCooldownMinutes;
 
     // Data
     std::vector<DungeonInfo> _dungeons;
     std::vector<AffixInfo> _affixes;
     std::unordered_map<uint32, ChallengeRun> _activeRuns; // instanceId -> run
     std::unordered_map<uint32, std::vector<LeaderboardEntry>> _leaderboard; // mapId -> entries
+    std::vector<SpellOverrideEntry> _spellOverrides;
+    // Snapshots: mapId -> vector of snapshots
+    std::unordered_map<uint32, std::vector<BossKillSnapshot>> _snapshots;
 
     // Random
     std::mt19937 _rng;
