@@ -123,10 +123,12 @@ end
 
 AIO.AddOnInit(function(msg, player)
     if player then
-        msg:Add("DungeonChallenge", "Init",
-            GetDungeonDataForClient(),
-            GetAffixDataForClient(),
-            GetConfigForClient())
+        local dData = GetDungeonDataForClient()
+        local aData = GetAffixDataForClient()
+        local cData = GetConfigForClient()
+        print("[mod-dungeon-challenge] AIO: Sending init to " .. player:GetName()
+            .. " (" .. #dData .. " dungeons, " .. #aData .. " affixes)")
+        msg:Add("DungeonChallenge", "Init", dData, aData, cData)
     end
     return msg
 end)
