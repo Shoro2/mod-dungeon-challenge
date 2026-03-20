@@ -32,16 +32,16 @@ local CONFIG = {
 
 -- Every 10 levels adds +1 affix. Selected mobs receive ALL available affixes.
 local AFFIXES = {
-    { id = 1,  name = "Call for Help",   desc = "Calls allies within 30y for help",                             minDiff = 10  },
-    { id = 2,  name = "Speedy",          desc = "+100% move speed, +10% attack speed",                          minDiff = 20  },
-    { id = 3,  name = "Big Boy",         desc = "+50% HP, increased size",                                      minDiff = 30  },
-    { id = 4,  name = "Immolation Aura", desc = "Periodic fire damage (Level x 80) to nearby players",          minDiff = 40  },
-    { id = 5,  name = "CC Immunity",     desc = "Immune to all crowd control",                                   minDiff = 50  },
-    { id = 6,  name = "Heavy Hits",      desc = "+33% damage",                                                   minDiff = 60  },
-    { id = 7,  name = "Lil' Bro",        desc = "Splits into 2 on death (1->2->4), -90% HP each tier",          minDiff = 70  },
-    { id = 8,  name = "Damage Reduce",   desc = "Allies within 30y take -25% damage",                            minDiff = 80  },
-    { id = 9,  name = "Bigger Boy",      desc = "Additional +50% HP, increased size, +10% damage",               minDiff = 90  },
-    { id = 10, name = "Hell Touched",    desc = "+666 hellfire dmg on hit, -10% stats (10s, stacks 10)",         minDiff = 100 },
+    { id = 1,  name = "Call for Help",   desc = "Calls allies within 30y for help",                     minDiff = 10,  spellId = 900060 },
+    { id = 2,  name = "Speedy",          desc = "+100% move speed, +10% attack speed",                  minDiff = 20,  spellId = 900050 },
+    { id = 3,  name = "Big Boy",         desc = "+50% HP, increased size",                              minDiff = 30,  spellId = 900056 },
+    { id = 4,  name = "Immolation Aura", desc = "Periodic fire damage (Level x 80) to nearby players",  minDiff = 40,  spellId = 900051 },
+    { id = 5,  name = "CC Immunity",     desc = "Immune to all crowd control",                           minDiff = 50,  spellId = 900052 },
+    { id = 6,  name = "Heavy Hits",      desc = "+33% damage",                                           minDiff = 60,  spellId = 900058 },
+    { id = 7,  name = "Lil' Bro",        desc = "Splits into 2 on death (1->2->4), -90% HP each tier",  minDiff = 70,  spellId = 900059 },
+    { id = 8,  name = "Damage Reduce",   desc = "Allies within 30y take -25% damage",                    minDiff = 80,  spellId = 900055 },
+    { id = 9,  name = "Bigger Boy",      desc = "Additional +50% HP, increased size, +10% damage",       minDiff = 90,  spellId = 900057 },
+    { id = 10, name = "Hell Touched",    desc = "+666 hellfire dmg on hit, -10% stats (10s, stacks 10)", minDiff = 100, spellId = 900054 },
 }
 
 -- ============================================================================
@@ -120,10 +120,10 @@ RegisterPlayerEvent(PLAYER_EVENT_ON_LOGIN, function(event, player)
                 d.mapId, d.name, d.timerMinutes, d.bossCount)
         end
 
-        -- Send each affix as flat parameters
+        -- Send each affix as flat parameters (including spellId for links)
         for _, a in ipairs(AFFIXES) do
             AIO.Handle(pl, "DungeonChallenge", "InitAffix",
-                a.id, a.name, a.desc, a.minDiff)
+                a.id, a.name, a.desc, a.minDiff, a.spellId)
         end
 
         -- Signal that init is complete

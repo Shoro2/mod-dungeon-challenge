@@ -85,6 +85,13 @@ local function GetAffixesForDifficulty(diff)
     return result
 end
 
+local function AffixSpellLink(a)
+    if a.spellId then
+        return string.format("|cffff8000|Hspell:%d|h[%s]|h|r", a.spellId, a.name)
+    end
+    return "|cffff8000" .. a.name .. "|r"
+end
+
 -- ============================================================================
 -- Main Frame
 -- ============================================================================
@@ -221,6 +228,20 @@ local ScrollChild = CreateFrame("Frame", nil)
 ScrollChild:SetWidth(SCROLL_CONTENT_WIDTH)
 ScrollChild:SetHeight(1)
 ScrollFrame:SetScrollChild(ScrollChild)
+
+-- Enable spell link tooltips and clicks within scroll content
+ScrollChild:SetHyperlinksEnabled(true)
+ScrollChild:SetScript("OnHyperlinkEnter", function(self, link)
+    GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+    GameTooltip:SetHyperlink(link)
+    GameTooltip:Show()
+end)
+ScrollChild:SetScript("OnHyperlinkLeave", function(self)
+    GameTooltip:Hide()
+end)
+ScrollChild:SetScript("OnHyperlinkClick", function(self, link, text, button)
+    SetItemRef(link, text, button)
+end)
 
 -- Mouse wheel scrolling
 ScrollFrame:EnableMouseWheel(true)
@@ -616,12 +637,12 @@ function ShowDifficultyPanel()
         if #affixes > 0 then
             local affixNames = {}
             for _, a in ipairs(affixes) do
-                table.insert(affixNames, "|cffff8000" .. a.name .. "|r")
+                table.insert(affixNames, AffixSpellLink(a))
             end
             affixLabel:SetText("|cffFFD700Active Affixes:|r  " .. table.concat(affixNames, ", "))
             local details = {}
             for _, a in ipairs(affixes) do
-                table.insert(details, string.format("  |cffff8000%s|r — %s", a.name, a.desc or ""))
+                table.insert(details, string.format("  %s — %s", AffixSpellLink(a), a.desc or ""))
             end
             affixDetailLabel:SetText(table.concat(details, "\n"))
         else
@@ -726,8 +747,8 @@ function ShowConfirmPanel()
         y = y - 16
     else
         for _, a in ipairs(affixes) do
-            AddLabel(y, string.format("  |cffff8000%s|r - |cffaaaaaa%s|r",
-                a.name, a.desc or ""))
+            AddLabel(y, string.format("  %s - |cffaaaaaa%s|r",
+                AffixSpellLink(a), a.desc or ""))
             y = y - 16
         end
     end
@@ -988,12 +1009,13 @@ DC_ClientHandlers.InitDungeon = function(player, mapId, name, timerMinutes, boss
 end
 
 -- Receive a single affix (flat parameters)
-DC_ClientHandlers.InitAffix = function(player, id, name, desc, minDiff)
+DC_ClientHandlers.InitAffix = function(player, id, name, desc, minDiff, spellId)
     table.insert(affixData, {
         id      = id,
         name    = name,
         desc    = desc,
         minDiff = minDiff,
+        spellId = spellId,
     })
 end
 
