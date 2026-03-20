@@ -471,8 +471,8 @@ void DungeonChallengeMgr::AssignAffixesToCreatures(ChallengeRun* run, Map* map)
             continue;
         if (creature->IsPet() || creature->IsSummon() || creature->IsTotem())
             continue;
-        // Skip bosses (rank 3 = boss)
-        if (creature->isWorldBoss() || creature->GetCreatureTemplate()->rank >= 3)
+        // Skip bosses (world bosses, dungeon bosses, rank 3+)
+        if (creature->isWorldBoss() || creature->IsDungeonBoss() || creature->GetCreatureTemplate()->rank >= 3)
             continue;
         // Skip critters and non-combat NPCs
         if (creature->GetCreatureTemplate()->unit_class == 0)
