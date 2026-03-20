@@ -87,7 +87,7 @@ end
 -- ============================================================================
 
 local MainFrame = CreateFrame("Frame", "DungeonChallengeFrame", UIParent)
-MainFrame:SetSize(520, 450)
+MainFrame:SetSize(676, 585)
 MainFrame:SetPoint("CENTER", 0, 50)
 MainFrame:SetMovable(true)
 MainFrame:EnableMouse(true)
@@ -149,8 +149,8 @@ local tabButtons = {}
 
 local function CreateTabButton(parent, index, tabInfo)
     local btn = CreateFrame("Button", "DCTab_" .. tabInfo.key, parent)
-    btn:SetSize(120, 24)
-    btn:SetPoint("TOPLEFT", 8 + (index - 1) * 126, -38)
+    btn:SetSize(156, 28)
+    btn:SetPoint("TOPLEFT", 8 + (index - 1) * 163, -38)
 
     local bg = btn:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
@@ -196,7 +196,7 @@ end
 -- ============================================================================
 
 local ContentFrame = CreateFrame("Frame", nil, MainFrame)
-ContentFrame:SetPoint("TOPLEFT", 8, -66)
+ContentFrame:SetPoint("TOPLEFT", 8, -72)
 ContentFrame:SetPoint("BOTTOMRIGHT", -8, 8)
 ContentFrame:SetBackdrop({
     bgFile = "Interface/Tooltips/UI-Tooltip-Background",
@@ -212,7 +212,7 @@ local ScrollFrame = CreateFrame("ScrollFrame", nil, ContentFrame)
 ScrollFrame:SetPoint("TOPLEFT", 4, -4)
 ScrollFrame:SetPoint("BOTTOMRIGHT", -4, 4)
 
-local SCROLL_CONTENT_WIDTH = 480
+local SCROLL_CONTENT_WIDTH = 636
 
 local ScrollChild = CreateFrame("Frame", nil)
 ScrollChild:SetWidth(SCROLL_CONTENT_WIDTH)
@@ -362,12 +362,16 @@ end
 
 function ShowDifficultyPanel()
     ClearContent()
-    selectedDifficulty = nil
 
     local d = dungeonData[selectedDungeon]
     if not d then
         ShowDungeonPanel()
         return
+    end
+
+    local maxDiff = config.maxDifficulty or 20
+    if not selectedDifficulty then
+        selectedDifficulty = 1
     end
 
     local y = -8
@@ -383,42 +387,189 @@ function ShowDifficultyPanel()
     AddClickableText(y, "|cff888888<< Back to Dungeons|r", function()
         ShowDungeonPanel()
     end)
-    y = y - 26
+    y = y - 30
 
     AddDivider(y)
-    y = y - 8
+    y = y - 16
 
-    local maxDiff = config.maxDifficulty or 20
+    -- Difficulty Slider
+    local slider = CreateFrame("Slider", "DCDifficultySlider", ScrollChild, "OptionsSliderTemplate")
+    slider:SetWidth(SCROLL_CONTENT_WIDTH - 60)
+    slider:SetHeight(17)
+    slider:SetPoint("TOPLEFT", 30, y)
+    slider:SetMinMaxValues(1, maxDiff)
+    slider:SetValueStep(1)
+    slider:SetObeyStepOnDrag(true)
+    slider:SetValue(selectedDifficulty)
+    getglobal("DCDifficultySliderLow"):SetText("|cff00ff001|r")
+    getglobal("DCDifficultySliderHigh"):SetText(string.format("|cffff0000%d|r", maxDiff))
+    getglobal("DCDifficultySliderText"):SetText("")
+    slider:Show()
+    table.insert(contentElements, slider)
+    y = y - 36
 
-    for diff = 1, maxDiff do
+    -- "Run Level: X" label with clickable number
+    local levelLabel = ScrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    levelLabel:SetPoint("TOPLEFT", 30, y)
+    levelLabel:SetText("Run Level: ")
+    levelLabel:Show()
+    table.insert(contentElements, levelLabel)
+
+    -- Clickable level number
+    local levelBtn = CreateFrame("Button", nil, ScrollChild)
+    levelBtn:SetSize(60, 22)
+    levelBtn:SetPoint("LEFT", levelLabel, "RIGHT", 2, 0)
+
+    local levelBtnText = levelBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    levelBtnText:SetPoint("LEFT", 0, 0)
+    levelBtnText:SetJustifyH("LEFT")
+    local r, g, b = DifficultyColor(selectedDifficulty)
+    levelBtnText:SetTextColor(r, g, b)
+    levelBtnText:SetText(tostring(selectedDifficulty))
+    levelBtn.text = levelBtnText
+
+    local levelBtnUnderline = levelBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    levelBtnUnderline:SetPoint("TOPLEFT", levelBtnText, "BOTTOMLEFT", 0, 2)
+    levelBtnUnderline:SetText("|cff888888(click to edit)|r")
+
+    levelBtn:Show()
+    table.insert(contentElements, levelBtn)
+
+    -- EditBox (hidden by default, shown on click)
+    local editBox = CreateFrame("EditBox", nil, ScrollChild)
+    editBox:SetSize(50, 22)
+    editBox:SetPoint("LEFT", levelLabel, "RIGHT", 2, 0)
+    editBox:SetFontObject(GameFontNormalLarge)
+    editBox:SetAutoFocus(false)
+    editBox:SetNumeric(true)
+    editBox:SetMaxLetters(2)
+    editBox:SetBackdrop({
+        bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+        tile = true, tileSize = 8, edgeSize = 8,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 }
+    })
+    editBox:SetBackdropColor(0.1, 0.1, 0.2, 0.9)
+    editBox:SetBackdropBorderColor(0.6, 0.6, 0.9, 0.8)
+    editBox:Hide()
+    table.insert(contentElements, editBox)
+
+    -- Click level number → show edit box
+    levelBtn:SetScript("OnClick", function()
+        levelBtn:Hide()
+        editBox:SetText(tostring(selectedDifficulty))
+        editBox:Show()
+        editBox:SetFocus()
+        editBox:HighlightText()
+    end)
+
+    -- Function to apply the edit box value
+    local function ApplyEditValue()
+        local val = tonumber(editBox:GetText())
+        if val then
+            val = math.max(1, math.min(maxDiff, val))
+            selectedDifficulty = val
+            slider:SetValue(val)
+        end
+        editBox:Hide()
+        levelBtn:Show()
+        local cr, cg, cb = DifficultyColor(selectedDifficulty)
+        levelBtnText:SetTextColor(cr, cg, cb)
+        levelBtnText:SetText(tostring(selectedDifficulty))
+        -- Refresh the stats/affixes below
+        UpdateDifficultyDetails()
+    end
+
+    editBox:SetScript("OnEnterPressed", ApplyEditValue)
+    editBox:SetScript("OnEscapePressed", function()
+        editBox:Hide()
+        levelBtn:Show()
+    end)
+
+    y = y - 32
+    AddDivider(y)
+    y = y - 14
+
+    -- Stats & Affixes info area (updated dynamically)
+    local statsLabel = ScrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    statsLabel:SetPoint("TOPLEFT", 8, y)
+    statsLabel:SetWidth(SCROLL_CONTENT_WIDTH - 16)
+    statsLabel:SetJustifyH("LEFT")
+    statsLabel:Show()
+    table.insert(contentElements, statsLabel)
+    y = y - 18
+
+    local affixLabel = ScrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    affixLabel:SetPoint("TOPLEFT", 8, y)
+    affixLabel:SetWidth(SCROLL_CONTENT_WIDTH - 16)
+    affixLabel:SetJustifyH("LEFT")
+    affixLabel:Show()
+    table.insert(contentElements, affixLabel)
+    y = y - 24
+
+    local affixDetailLabel = ScrollChild:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    affixDetailLabel:SetPoint("TOPLEFT", 16, y)
+    affixDetailLabel:SetWidth(SCROLL_CONTENT_WIDTH - 32)
+    affixDetailLabel:SetJustifyH("LEFT")
+    affixDetailLabel:Show()
+    table.insert(contentElements, affixDetailLabel)
+    y = y - 40
+
+    -- Confirm button
+    local confirmBtn = CreateFrame("Button", nil, ScrollChild, "UIPanelButtonTemplate")
+    confirmBtn:SetSize(220, 30)
+    confirmBtn:SetPoint("TOP", ScrollChild, "TOP", 0, y)
+    confirmBtn:SetText("|cff00ff00Continue >>|r")
+    confirmBtn:SetScript("OnClick", function()
+        ShowConfirmPanel()
+    end)
+    confirmBtn:Show()
+    table.insert(contentElements, confirmBtn)
+    y = y - 40
+
+    ScrollChild:SetHeight(math.abs(y) + 10)
+
+    -- Update function for stats/affixes display
+    function UpdateDifficultyDetails()
+        local diff = selectedDifficulty
         local hpMult = GetHPMult(diff)
         local dmgMult = GetDMGMult(diff)
         local affixes = GetAffixesForDifficulty(diff)
         local colorHex = DifficultyColorHex(diff)
-        local r, g, b = DifficultyColor(diff)
 
-        AddClickableText(y, string.format(
-            "%sLevel %d|r  |cffaaaaaaHP: x%.1f  DMG: x%.1f  Affixes: %d|r",
-            colorHex, diff, hpMult, dmgMult, #affixes), function()
-            selectedDifficulty = diff
-            ShowConfirmPanel()
-        end)
-        y = y - 22
+        statsLabel:SetText(string.format(
+            "%sLevel %d|r  —  |cffaaaaaaHP: x%.1f  |  DMG: x%.1f  |  Affixes: %d|r",
+            colorHex, diff, hpMult, dmgMult, #affixes))
 
         if #affixes > 0 then
             local affixNames = {}
             for _, a in ipairs(affixes) do
                 table.insert(affixNames, "|cffff8000" .. a.name .. "|r")
             end
-            AddLabel(y, "    " .. table.concat(affixNames, ", "),
-                "GameFontHighlightSmall")
-            y = y - 16
+            affixLabel:SetText("|cffFFD700Active Affixes:|r  " .. table.concat(affixNames, ", "))
+            local details = {}
+            for _, a in ipairs(affixes) do
+                table.insert(details, string.format("  |cffff8000%s|r — %s", a.name, a.desc or ""))
+            end
+            affixDetailLabel:SetText(table.concat(details, "\n"))
+        else
+            affixLabel:SetText("|cff00ff00No affixes at this level.|r")
+            affixDetailLabel:SetText("")
         end
-
-        y = y - 4
     end
 
-    ScrollChild:SetHeight(math.abs(y) + 10)
+    -- Slider change handler
+    slider:SetScript("OnValueChanged", function(self, value)
+        value = math.floor(value + 0.5)
+        selectedDifficulty = value
+        local cr, cg, cb = DifficultyColor(value)
+        levelBtnText:SetTextColor(cr, cg, cb)
+        levelBtnText:SetText(tostring(value))
+        UpdateDifficultyDetails()
+    end)
+
+    -- Initial display
+    UpdateDifficultyDetails()
 end
 
 -- ============================================================================
@@ -503,6 +654,7 @@ function ShowConfirmPanel()
         MainFrame:Hide()
     end)
     startBtn:Show()
+    table.insert(contentElements, startBtn)
     y = y - 36
 
     AddClickableText(y, "|cff888888<< Change Difficulty|r", function()
