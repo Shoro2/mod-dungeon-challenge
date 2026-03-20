@@ -386,7 +386,7 @@ private:
         }
 
         // Announce to group
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
         {
             if (Player* member = ref->GetSource())
             {
@@ -401,7 +401,7 @@ private:
         }
 
         // Teleport all group members to dungeon entrance
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
         {
             if (Player* member = ref->GetSource())
             {

@@ -348,7 +348,7 @@ ChallengeRun* DungeonChallengeMgr::CreateChallengeRun(uint32 instanceId, uint32 
     run.participants.insert(leader->GetGUID());
     if (Group* group = leader->GetGroup())
     {
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->Next())
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
             if (Player* member = ref->GetSource())
                 run.participants.insert(member->GetGUID());
     }
@@ -469,7 +469,7 @@ void DungeonChallengeMgr::AssignAffixesToCreatures(ChallengeRun* run, Map* map)
         if (creature->IsPet() || creature->IsSummon() || creature->IsTotem())
             continue;
         // Skip bosses (rank 3 = boss)
-        if (creature->IsWorldBoss() || creature->GetCreatureTemplate()->rank >= 3)
+        if (creature->isWorldBoss() || creature->GetCreatureTemplate()->rank >= 3)
             continue;
         // Skip critters and non-combat NPCs
         if (creature->GetCreatureTemplate()->unit_class == 0)
