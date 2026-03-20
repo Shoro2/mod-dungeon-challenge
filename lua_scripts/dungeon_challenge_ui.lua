@@ -212,26 +212,29 @@ local ScrollFrame = CreateFrame("ScrollFrame", "DCScrollFrame", ContentFrame,
 ScrollFrame:SetPoint("TOPLEFT", 4, -4)
 ScrollFrame:SetPoint("BOTTOMRIGHT", -26, 4)
 
+-- ScrollChild width must match the scroll frame content area (~480px)
+local SCROLL_CONTENT_WIDTH = 480
+
 local ScrollChild = CreateFrame("Frame", nil, ScrollFrame)
-ScrollChild:SetSize(1, 1)
+ScrollChild:SetWidth(SCROLL_CONTENT_WIDTH)
+ScrollChild:SetHeight(1)
 ScrollFrame:SetScrollChild(ScrollChild)
 
 -- ============================================================================
 -- Dynamic Content Builder
--- Instead of SetParent(nil) (which crashes for FontStrings/Textures in 3.3.5),
--- we destroy and recreate the ScrollChild each time content changes.
+-- We keep the same ScrollChild and just hide old elements on clear.
+-- Hidden FontStrings/Textures stay attached but invisible (no SetParent needed).
 -- ============================================================================
 
-local function ClearContent()
-    -- Hide old scroll child (WoW will garbage collect orphaned children)
-    ScrollChild:Hide()
-    ScrollChild:SetParent(nil)
+local contentElements = {}
 
-    -- Create fresh scroll child with proper width matching the scroll frame
-    ScrollChild = CreateFrame("Frame", nil, ScrollFrame)
-    ScrollChild:SetWidth(ScrollFrame:GetWidth())
+local function ClearContent()
+    for _, elem in ipairs(contentElements) do
+        elem:Hide()
+        elem:ClearAllPoints()
+    end
+    contentElements = {}
     ScrollChild:SetHeight(1)
-    ScrollFrame:SetScrollChild(ScrollChild)
     ScrollFrame:SetVerticalScroll(0)
 end
 
@@ -239,13 +242,14 @@ local function AddLabel(yOffset, text, fontTemplate, r, g, b)
     fontTemplate = fontTemplate or "GameFontNormal"
     local label = ScrollChild:CreateFontString(nil, "OVERLAY", fontTemplate)
     label:SetPoint("TOPLEFT", 8, yOffset)
-    label:SetPoint("TOPRIGHT", -8, yOffset)
+    label:SetWidth(SCROLL_CONTENT_WIDTH - 16)
     label:SetJustifyH("LEFT")
     label:SetText(text)
     if r and g and b then
         label:SetTextColor(r, g, b)
     end
     label:Show()
+    table.insert(contentElements, label)
     return label
 end
 
@@ -256,16 +260,18 @@ local function AddButton(yOffset, width, height, text, onClick)
     btn:SetText(text)
     btn:SetScript("OnClick", onClick)
     btn:Show()
+    table.insert(contentElements, btn)
     return btn
 end
 
 local function AddDivider(yOffset)
     local div = ScrollChild:CreateTexture(nil, "ARTWORK")
     div:SetPoint("TOPLEFT", 4, yOffset)
-    div:SetPoint("TOPRIGHT", -4, yOffset)
+    div:SetWidth(SCROLL_CONTENT_WIDTH - 8)
     div:SetHeight(1)
     div:SetTexture(0.4, 0.4, 0.6, 0.5)
     div:Show()
+    table.insert(contentElements, div)
     return div
 end
 
