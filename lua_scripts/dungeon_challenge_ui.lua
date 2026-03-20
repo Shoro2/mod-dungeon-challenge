@@ -276,8 +276,35 @@ local function AddDivider(yOffset)
 end
 
 -- ============================================================================
--- Panel: Dungeon Selection
+-- Panel: Dungeon Selection (simple clickable text list)
 -- ============================================================================
+
+local function AddClickableText(yOffset, text, onClick)
+    local btn = CreateFrame("Button", nil, ScrollChild)
+    btn:SetSize(SCROLL_CONTENT_WIDTH - 16, 20)
+    btn:SetPoint("TOPLEFT", 8, yOffset)
+
+    local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    label:SetPoint("LEFT", 0, 0)
+    label:SetText(text)
+    label:SetJustifyH("LEFT")
+    btn.label = label
+
+    local highlight = btn:CreateTexture(nil, "HIGHLIGHT")
+    highlight:SetAllPoints()
+    highlight:SetTexture(0.3, 0.3, 0.6, 0.3)
+
+    btn:SetScript("OnClick", onClick)
+    btn:SetScript("OnEnter", function(self)
+        self.label:SetTextColor(1.0, 0.82, 0.0)
+    end)
+    btn:SetScript("OnLeave", function(self)
+        self.label:SetTextColor(1.0, 1.0, 1.0)
+    end)
+    btn:Show()
+    table.insert(contentElements, btn)
+    return btn
+end
 
 function ShowDungeonPanel()
     ClearContent()
@@ -298,21 +325,18 @@ function ShowDungeonPanel()
 
     for i, d in ipairs(dungeonData) do
         AddDivider(y - 2)
-        y = y - 6
+        y = y - 8
 
-        local btn = AddButton(y, 460, 28, d.name, function()
+        AddClickableText(y, "|cffffffff" .. (d.name or "Unknown") .. "|r", function()
             selectedDungeon = i
             ShowDifficultyPanel()
         end)
+        y = y - 22
 
-        local info = ScrollChild:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        info:SetPoint("TOPLEFT", 8, y - 30)
-        info:SetText(string.format(
+        AddLabel(y, string.format(
             "    |cffaaaaaa Timer: %d min  |  Bosses: %d|r",
-            d.timerMinutes or 30, d.bossCount or 0))
-        info:Show()
-
-        y = y - 50
+            d.timerMinutes or 30, d.bossCount or 0), "GameFontHighlightSmall")
+        y = y - 20
     end
 
     ScrollChild:SetHeight(math.abs(y) + 10)
@@ -337,10 +361,15 @@ function ShowDifficultyPanel()
         "GameFontNormalLarge")
     y = y - 22
 
-    AddButton(y, 100, 22, "<< Back", function()
+    AddLabel(y, string.format(
+        "|cffaaaaaa Bosses: %d  |  Timer: %d min|r",
+        d.bossCount or 0, d.timerMinutes or 30), "GameFontHighlightSmall")
+    y = y - 20
+
+    AddClickableText(y, "|cff888888<< Back to Dungeons|r", function()
         ShowDungeonPanel()
     end)
-    y = y - 30
+    y = y - 26
 
     AddDivider(y)
     y = y - 8
@@ -351,23 +380,28 @@ function ShowDifficultyPanel()
         local hpMult = GetHPMult(diff)
         local dmgMult = GetDMGMult(diff)
         local affixes = GetAffixesForDifficulty(diff)
+        local colorHex = DifficultyColorHex(diff)
         local r, g, b = DifficultyColor(diff)
 
-        local btn = AddButton(y, 90, 24, string.format("Level %d", diff), function()
+        AddClickableText(y, string.format(
+            "%sLevel %d|r  |cffaaaaaaHP: x%.1f  DMG: x%.1f  Affixes: %d|r",
+            colorHex, diff, hpMult, dmgMult, #affixes), function()
             selectedDifficulty = diff
             ShowConfirmPanel()
         end)
+        y = y - 22
 
-        local statsText = ScrollChild:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        statsText:SetPoint("LEFT", btn, "RIGHT", 10, 0)
-        statsText:SetText(string.format(
-            "|cffaaaaaaHP: |cff%02x%02x00x%.1f|r  |cffaaaaaaDMG: |cff%02x%02x00x%.1f|r  |cffaaaaaaAffixes: %d|r",
-            math.floor(r*255), math.floor(g*255), hpMult,
-            math.floor(r*255), math.floor(g*255), dmgMult,
-            #affixes))
-        statsText:Show()
+        if #affixes > 0 then
+            local affixNames = {}
+            for _, a in ipairs(affixes) do
+                table.insert(affixNames, "|cffff8000" .. a.name .. "|r")
+            end
+            AddLabel(y, "    " .. table.concat(affixNames, ", "),
+                "GameFontHighlightSmall")
+            y = y - 16
+        end
 
-        y = y - 28
+        y = y - 4
     end
 
     ScrollChild:SetHeight(math.abs(y) + 10)
@@ -457,12 +491,12 @@ function ShowConfirmPanel()
     startBtn:Show()
     y = y - 36
 
-    AddButton(y, 180, 24, "<< Change Difficulty", function()
+    AddClickableText(y, "|cff888888<< Change Difficulty|r", function()
         ShowDifficultyPanel()
     end)
-    y = y - 28
+    y = y - 22
 
-    AddButton(y, 180, 24, "<< Change Dungeon", function()
+    AddClickableText(y, "|cff888888<< Change Dungeon|r", function()
         ShowDungeonPanel()
     end)
     y = y - 28
@@ -488,12 +522,12 @@ function ShowLeaderboardPanel()
     end
 
     for i, d in ipairs(dungeonData) do
-        AddButton(y, 400, 26, d.name, function()
+        AddClickableText(y, "|cffffffff" .. (d.name or "Unknown") .. "|r", function()
             AIO.Msg()
                 :Add("DungeonChallenge", "RequestLeaderboard", d.mapId)
                 :Send()
         end)
-        y = y - 30
+        y = y - 24
     end
 
     ScrollChild:SetHeight(math.abs(y) + 10)
@@ -515,7 +549,7 @@ function ShowLeaderboardData(mapId, entries)
         "GameFontNormalLarge")
     y = y - 22
 
-    AddButton(y, 100, 22, "<< Back", function()
+    AddClickableText(y, "|cff888888<< Back|r", function()
         ShowLeaderboardPanel()
     end)
     y = y - 30
@@ -600,12 +634,12 @@ function ShowRecordsPanel()
     end
 
     for i, d in ipairs(dungeonData) do
-        AddButton(y, 400, 26, d.name, function()
+        AddClickableText(y, "|cffffffff" .. (d.name or "Unknown") .. "|r", function()
             AIO.Msg()
                 :Add("DungeonChallenge", "RequestSnapshots", d.mapId)
                 :Send()
         end)
-        y = y - 30
+        y = y - 24
     end
 
     ScrollChild:SetHeight(math.abs(y) + 10)
@@ -627,7 +661,7 @@ function ShowSnapshotData(mapId, entries)
         "GameFontNormalLarge")
     y = y - 22
 
-    AddButton(y, 100, 22, "<< Back", function()
+    AddClickableText(y, "|cff888888<< Back|r", function()
         ShowRecordsPanel()
     end)
     y = y - 30
