@@ -26,8 +26,7 @@ DungeonChallengeMgr::DungeonChallengeMgr()
     , _npcEntry(500000)
     , _announceOnLogin(true)
     , _deathPenaltySeconds(15)
-    , _keystoneEnabled(true)
-    , _keystoneBuyCooldownMinutes(1440)
+    , _gameObjectEntry(CHALLENGE_GO_ENTRY)
     , _rng(std::random_device{}())
 {
 }
@@ -48,11 +47,10 @@ void DungeonChallengeMgr::LoadConfig(bool /*reload*/)
     _npcEntry = sConfigMgr->GetOption<uint32>("DungeonChallenge.NpcEntry", 500000);
     _announceOnLogin = sConfigMgr->GetOption<bool>("DungeonChallenge.AnnounceOnLogin", true);
     _deathPenaltySeconds = sConfigMgr->GetOption<uint32>("DungeonChallenge.DeathPenaltySeconds", 15);
-    _keystoneEnabled = sConfigMgr->GetOption<bool>("DungeonChallenge.KeystoneEnabled", true);
-    _keystoneBuyCooldownMinutes = sConfigMgr->GetOption<uint32>("DungeonChallenge.KeystoneBuyCooldownMinutes", 1440);
+    _gameObjectEntry = sConfigMgr->GetOption<uint32>("DungeonChallenge.GameObjectEntry", CHALLENGE_GO_ENTRY);
 
-    LOG_INFO("module", ">> mod-dungeon-challenge: Configuration loaded (Enabled: {}, MaxDifficulty: {}, AffixPct: {}%, Keystone: {})",
-        _enabled ? "Yes" : "No", _maxDifficulty, _affixPercentage, _keystoneEnabled ? "Yes" : "No");
+    LOG_INFO("module", ">> mod-dungeon-challenge: Configuration loaded (Enabled: {}, MaxDifficulty: {}, AffixPct: {}%)",
+        _enabled ? "Yes" : "No", _maxDifficulty, _affixPercentage);
 }
 
 void DungeonChallengeMgr::LoadDungeonData()
@@ -746,13 +744,6 @@ void DungeonChallengeMgr::DistributeRewards(ChallengeRun const* run)
 
         // Gold reward
         player->ModifyMoney(goldReward);
-
-        // Drop a new keystone on completion if keystone is enabled
-        if (_keystoneEnabled)
-        {
-            if (!player->HasItemCount(KEYSTONE_ITEM_ENTRY, 1))
-                player->AddItem(KEYSTONE_ITEM_ENTRY, 1);
-        }
 
         // Announce to player
         uint32 totalTime = run->GetEffectiveElapsed();

@@ -50,16 +50,10 @@
 #       Time penalty added per player death (in seconds)
 #       Default: 15
 #
-#   DungeonChallenge.KeystoneEnabled
-#       Enable Keystone item system for run activation
-#       When enabled, players must use a Keystone item inside the dungeon
-#       to start the challenge timer (after selecting via NPC).
-#       When disabled, the timer starts automatically on dungeon entry.
-#       Default: 1 (enabled)
-#
-#   DungeonChallenge.KeystoneBuyCooldownMinutes
-#       Cooldown for buying a keystone from the NPC (in minutes)
-#       Default: 1440 (24 hours)
+#   DungeonChallenge.GameObjectEntry
+#       Entry ID for the Dungeon Challenge Stone (GameObject)
+#       This is the clickable object that opens the Lua gossip UI.
+#       Default: 500002
 #
 
 DungeonChallenge.Enable = 1
@@ -72,5 +66,4 @@ DungeonChallenge.LootBonusPerLevel = 50000
 DungeonChallenge.NpcEntry = 500000
 DungeonChallenge.AnnounceOnLogin = 1
 DungeonChallenge.DeathPenaltySeconds = 15
-DungeonChallenge.KeystoneEnabled = 1
-DungeonChallenge.KeystoneBuyCooldownMinutes = 1440
+DungeonChallenge.GameObjectEntry = 500002

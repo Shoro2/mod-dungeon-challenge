@@ -59,6 +59,19 @@ CREATE TABLE `dungeon_challenge_best` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
+-- Pending Challenge (communication between Lua GameObject UI and C++ scripts)
+-- ============================================================================
+
+DROP TABLE IF EXISTS `dungeon_challenge_pending`;
+CREATE TABLE `dungeon_challenge_pending` (
+    `player_guid` INT UNSIGNED NOT NULL,
+    `map_id` INT UNSIGNED NOT NULL,
+    `difficulty` INT UNSIGNED NOT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`player_guid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
 -- Boss Kill Snapshots (detailed per-boss-kill records)
 -- ============================================================================
 
