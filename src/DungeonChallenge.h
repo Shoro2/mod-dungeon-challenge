@@ -33,20 +33,30 @@ constexpr uint32 SNAPSHOT_RELOAD_INTERVAL    = 600000;  // 10 minutes in ms
 
 enum DungeonChallengeAffix : uint32
 {
-    AFFIX_NONE          = 0,
-    AFFIX_BOLSTERING    = 1,  // On death: nearby allies gain +20% damage/health
-    AFFIX_RAGING        = 2,  // Below 30% HP: +50% damage (enrage)
-    AFFIX_SANGUINE      = 3,  // On death: leaves healing pool for other mobs
-    AFFIX_NECROTIC      = 4,  // Melee attacks apply stacking healing reduction
-    AFFIX_BURSTING      = 5,  // On death: AoE damage to all players (stacking)
-    AFFIX_EXPLOSIVE     = 6,  // Periodically spawns explosive orb
-    AFFIX_FORTIFIED     = 7,  // +40% HP, +20% damage (non-boss)
-    AFFIX_VOLCANIC      = 8,  // Spawns fire patches under ranged players
-    AFFIX_STORMING      = 9,  // Spawns moving tornado near mob
-    AFFIX_INSPIRING     = 10, // Nearby allies cannot be interrupted/CC'd
+    AFFIX_NONE              = 0,
+    AFFIX_CALL_FOR_HELP     = 1,  // Call allies within 30y when entering combat
+    AFFIX_SPEEDY            = 2,  // +100% movement speed, +10% attack speed
+    AFFIX_BIG_BOY           = 3,  // +50% HP, +30% size
+    AFFIX_IMMOLATION        = 4,  // Periodic fire damage = difficulty * 80
+    AFFIX_CC_IMMUNITY       = 5,  // Immune to all crowd control
+    AFFIX_SHARPENED_WEAPONS = 6,  // +33% damage
+    AFFIX_LIL_BRO           = 7,  // On death: spawn 2 copies with -90% HP (1 lootable)
+    AFFIX_DAMAGE_REDUCE     = 8,  // Allies within 30y take -25% damage
+    AFFIX_BIGGER_BOY        = 9,  // Additional +50% HP, +10% damage
+    AFFIX_HELL_TOUCHED      = 10, // Extra 666 fire+shadow dmg, -10% stats debuff (10s, 10 stacks)
 
     AFFIX_MAX
 };
+
+// ============================================================================
+// Affix DBC Spell IDs (created manually in spell editor)
+// ============================================================================
+
+constexpr uint32 SPELL_AFFIX_SPEEDY             = 900050;  // Aura: +100% move speed, +10% melee haste
+constexpr uint32 SPELL_AFFIX_IMMOLATION_VISUAL  = 900051;  // Visual fire aura (damage handled in C++)
+constexpr uint32 SPELL_AFFIX_CC_IMMUNITY        = 900052;  // Aura: mechanic immunity (all CC)
+constexpr uint32 SPELL_AFFIX_HELL_TOUCHED_DEBUFF = 900053; // Debuff: -10% all stats, 10s, stack 10
+constexpr uint32 SPELL_AFFIX_DAMAGE_REDUCE_AURA = 900054;  // Visual aura on creature (logic in C++)
 
 struct AffixInfo
 {
@@ -174,8 +184,11 @@ struct CreatureChallengeData : public DataMap::Base
     uint32 originalHealth = 0;             // health before scaling
     float extraDamageMultiplier = 1.0f;    // stored damage multiplier for UnitScript hooks
     std::vector<DungeonChallengeAffix> affixes;  // all assigned affixes
-    bool hasEnraged = false;               // for RAGING affix tracking
-    bool isCopy = false;                   // for MULTIPLE_ENEMIES affix
+    bool isCopy = false;                   // for LIL_BRO spawned copies
+    bool noLoot = false;                   // for LIL_BRO non-lootable copy
+    bool hasCalled = false;                // for CALL_FOR_HELP (already triggered?)
+    uint32 immolationTimer = 0;            // for IMMOLATION periodic tick (ms)
+    float incomingDamageReduction = 0.0f;  // for DAMAGE_REDUCE aura on nearby allies
 
     bool HasAffix(DungeonChallengeAffix a) const
     {
@@ -289,6 +302,7 @@ private:
     bool _announceOnLogin;
     uint32 _deathPenaltySeconds;
     uint32 _gameObjectEntry;
+    uint32 _paragonXPPerLevel;
 
     // Data
     std::vector<DungeonInfo> _dungeons;

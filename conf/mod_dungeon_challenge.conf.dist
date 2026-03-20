@@ -55,6 +55,13 @@
 #       This is the clickable object that opens the Lua gossip UI.
 #       Default: 500002
 #
+#   DungeonChallenge.ParagonXPPerLevel
+#       Paragon XP reward per difficulty level on dungeon completion
+#       Doubled if completed in time
+#       Formula: ParagonXPPerLevel * difficulty * (inTime ? 2 : 1)
+#       Example: Level 50 in time = 10 * 50 * 2 = 1000 Paragon XP
+#       Default: 10
+#
 
 DungeonChallenge.Enable = 1
 DungeonChallenge.AffixPercentage = 10
@@ -67,3 +74,4 @@ DungeonChallenge.NpcEntry = 500000
 DungeonChallenge.AnnounceOnLogin = 1
 DungeonChallenge.DeathPenaltySeconds = 15
 DungeonChallenge.GameObjectEntry = 500002
+DungeonChallenge.ParagonXPPerLevel = 10

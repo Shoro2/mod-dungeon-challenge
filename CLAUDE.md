@@ -58,7 +58,7 @@ mod-dungeon-challenge/
 | `npc_dungeon_challenge` | DungeonChallengeNpc.cpp | CreatureScript for the gossip NPC (fallback) |
 | `DungeonChallengeWorldScript` | DungeonChallengeScripts.cpp | Config loading, startup, pending cleanup |
 | `DungeonChallengePlayerScript` | DungeonChallengeScripts.cpp | Login, map change (solo+group), death |
-| `DungeonChallengeCreatureScript` | DungeonChallengeScripts.cpp | Creature update (Raging affix, DataMap processing) |
+| `DungeonChallengeCreatureScript` | DungeonChallengeScripts.cpp | Creature update (Call for Help, Immolation, DataMap processing) |
 | `DungeonChallengeCreatureDeathScript` | DungeonChallengeScripts.cpp | Creature death (boss kill, affixes, non-mythic lock, snapshots) |
 | `DungeonChallengeUnitScript` | DungeonChallengeScripts.cpp | Damage modification via UnitScript hooks |
 | `DungeonChallengeTimerScript` | DungeonChallengeScripts.cpp | Timer display (AllMapScript) |
@@ -118,7 +118,7 @@ C++: OnPlayerMapChanged() (PlayerScript hook)
     └─ StartRun() immediately (State = RUNNING)
     ↓
 Dungeon running:
-    ├─ OnAllCreatureUpdate() → ProcessCreature() via DataMap + Raging check
+    ├─ OnAllCreatureUpdate() → ProcessCreature() via DataMap + Call for Help + Immolation tick
     ├─ ModifyMeleeDamage/ModifySpellDamageTaken → Damage via extraDamageMultiplier
     ├─ OnPlayerCreatureKill() → Boss kill + snapshot + affix on-death + non-mythic lock
     ├─ OnPlayerJustDied() → Death counter + penalty (solo or group notification)
@@ -147,6 +147,7 @@ AllBossesKilled()
 | `DungeonChallenge.AnnounceOnLogin` | 1 | Login message |
 | `DungeonChallenge.DeathPenaltySeconds` | 15 | Time penalty per death (seconds) |
 | `DungeonChallenge.GameObjectEntry` | 500002 | GameObject entry for the Dungeon Challenge Stone |
+| `DungeonChallenge.ParagonXPPerLevel` | 10 | Paragon XP per difficulty level (doubled if in time) |
 
 ## Scaling Formulas
 
@@ -167,6 +168,10 @@ Spell Override: dungeon_challenge_spell_override table
 Gold Reward = LootBonusPerLevel × Level × (inTime ? 2 : 1)
   Level 10 in time: 100g  |  Level 10 over time: 50g
 
+Paragon XP = ParagonXPPerLevel × Level × (inTime ? 2 : 1)
+  Level 50 in time: 10 × 50 × 2 = 1000 XP
+  Level 100 in time: 10 × 100 × 2 = 2000 XP
+
 Timer penalty per death: +DeathPenaltySeconds (Default: 15s)
   Effective time = elapsedTime + penaltyTime
 ```
@@ -177,18 +182,28 @@ Timer penalty per death: +DeathPenaltySeconds (Default: 15s)
 
 Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available affixes.
 
-| ID | Name | Effect | Min Level |
-|----|------|--------|-----------|
-| 7 | Fortified | +40% HP, +20% DMG (via extraDamageMultiplier) | 1 |
-| 1 | Bolstering | Death: Nearby allies gain +20% HP/DMG (via DataMap) | 10 |
-| 2 | Raging | Below 30% HP: +50% DMG (via extraDamageMultiplier) | 20 |
-| 3 | Sanguine | Death: Heals nearby mobs by 20% | 30 |
-| 5 | Bursting | Death: 5% MaxHP AoE to all players | 40 |
-| 4 | Necrotic | Melee: Stacking healing reduction | 50 |
-| 6 | Explosive | Spawns explosive orbs (periodic) | 60 |
-| 8 | Volcanic | Fire zones under ranged players | 70 |
-| 9 | Storming | Moving tornadoes | 80 |
-| 10 | Inspiring | Allies immune to CC/interrupt | 90 |
+| ID | Name | Effect | Min Level | DBC Spell |
+|----|------|--------|-----------|-----------|
+| 1 | Call for Help | Calls allies within 30y when entering combat | 10 | None (C++) |
+| 2 | Speedy | +100% move speed, +10% attack speed | 20 | 900050 |
+| 3 | Big Boy | +50% HP, +30% size | 30 | None (C++) |
+| 4 | Immolation Aura | Periodic fire damage = Level × 80 to players within 8y | 40 | 900051 (visual) |
+| 5 | CC Immunity | Immune to all crowd control | 50 | 900052 |
+| 6 | Sharpened Weapons | +33% damage | 60 | None (C++) |
+| 7 | Lil' Bro | On death: spawns 2 copies with -90% HP (1 lootable) | 70 | None (C++) |
+| 8 | Damage Reduce | Allies within 30y take -25% damage | 80 | 900054 (visual) |
+| 9 | Bigger Boy | Additional +50% HP, +10% damage | 90 | None (C++) |
+| 10 | Hell Touched | +666 fire+shadow dmg on hit, -10% stats debuff (10s, 10 stacks) | 100 | 900053 |
+
+### DBC Spell IDs (created manually in Stoneharry spell editor)
+
+| Spell ID | Name | Purpose |
+|----------|------|---------|
+| 900050 | Speedy Aura | +100% move speed, +10% melee haste |
+| 900051 | Immolation Visual | Fire visual aura (damage in C++) |
+| 900052 | CC Immunity | Visual indicator on CC-immune creature |
+| 900053 | Hell Touched Debuff | -10% all stats, 10s duration, stackable to 10 |
+| 900054 | Damage Reduce Visual | Visual indicator on creature with damage reduce |
 
 ### Affix Assignment
 
@@ -198,21 +213,18 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 4. ALL affixes whose `minDifficulty ≤ current level` are assigned to each selected mob
 5. Affixes are stored in `CreatureChallengeData::affixes` vector (DataMap)
 
-### Implemented Affix Effects
+### Affix Implementation Details
 
-- **Fortified**: On assignment: +40% HP directly, +20% via extraDamageMultiplier (UnitScript)
-- **Raging**: Per-tick check in `OnAllCreatureUpdate()` → hasEnraged flag + extraDamageMultiplier *= 1.5
-- **Bolstering**: In `OnPlayerCreatureKill()` → +20% HP + extraDamageMultiplier *= 1.2 via DataMap
-- **Bursting**: In `OnPlayerCreatureKill()` → `EnvironmentalDamage()` to all players
-- **Sanguine**: In `OnPlayerCreatureKill()` → `ModifyHealth()` on nearby mobs
-
-### Not Yet Implemented Affixes (TODO)
-
-- **Necrotic**: Requires SpellScript for healing reduction debuff
-- **Explosive**: Requires TempSummon for explosive orb creature
-- **Volcanic**: Requires periodic spell + position calculation
-- **Storming**: Requires creature movement with tornado visual
-- **Inspiring**: Requires aura mechanic for CC/interrupt immunity
+- **Call for Help**: `OnAllCreatureUpdate()` → when creature enters combat + hasCalled flag, iterate nearby creatures and `AttackStart()`
+- **Speedy**: `ApplyAffixToCreature()` → CastSpell(SPELL_AFFIX_SPEEDY) DBC aura
+- **Big Boy**: `ApplyAffixToCreature()` → SetMaxHealth * 1.5 + SetObjectScale * 1.3
+- **Immolation**: `OnAllCreatureUpdate()` → 2-second tick timer, `EnvironmentalDamage(DAMAGE_FIRE, difficulty * 80)` to players within 8y
+- **CC Immunity**: `ApplyAffixToCreature()` → `ApplySpellImmune()` for all CC mechanics + visual aura
+- **Sharpened Weapons**: `ApplyAffixToCreature()` → extraDamageMultiplier *= 1.33
+- **Lil' Bro**: `OnPlayerCreatureKill()` → SummonCreature × 2, HP = 10% original, one marked noLoot, isCopy prevents recursion
+- **Damage Reduce**: `ApplyAffixToCreature()` → sets incomingDamageReduction = 0.25 on all allies within 30y; UnitScript checks this on player→creature damage
+- **Bigger Boy**: `ApplyAffixToCreature()` → SetMaxHealth * 1.5 + extraDamageMultiplier *= 1.1
+- **Hell Touched**: UnitScript `ModifyMeleeDamage()`/`ModifySpellDamageTaken()` → EnvironmentalDamage(666) + CastSpell(debuff)
 
 ## Database Tables
 
@@ -242,7 +254,7 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 | NPC Entry | 500000 | Dungeon Challenge NPC (fallback) |
 | GameObject Entry | 500002 | Dungeon Challenge Stone (primary) |
 | Gossip Actions | 1000-5999 | Menu navigation (Lua + C++) |
-| Spell | 8599 | Enrage Visual (Raging affix) |
+| Spells | 900050-900054 | Affix DBC spells (Speedy, Immolation, CC Immunity, Hell Touched, Damage Reduce) |
 | Maps | 574-668 | WotLK 5-man dungeons |
 
 ## Code Conventions
@@ -258,7 +270,7 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 
 ## Known Limitations / TODOs
 
-1. **Affix Implementation**: Necrotic, Explosive, Volcanic, Storming, Inspiring are prepared as hooks but not implemented
+1. **DBC Spells**: Affix spells 900050-900054 must be created manually in Stoneharry spell editor
 2. **Boss Detection**: Currently via `creature_template.rank >= 3` → some bosses have rank < 3
 3. **Timer UI**: Currently only chat messages → could be extended to AIO-based timer display frame
 4. **Prepared Statements**: Currently format-string-based queries → should use prepared statements
