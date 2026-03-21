@@ -356,6 +356,13 @@ private:
             return;
         }
 
+        // Force heroic difficulty for challenge runs
+        if (group)
+            group->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
+        else
+            player->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
+        player->SendDungeonDifficulty(group != nullptr);
+
         // Announce and teleport
         if (group)
         {

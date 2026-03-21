@@ -52,10 +52,21 @@ public:
             "|cffff8000Dungeon Challenge Stone|r to start a challenge.");
     }
 
+    void OnPlayerLogout(Player* player) override
+    {
+        if (!sDungeonChallengeMgr->IsEnabled())
+            return;
+
+        FailRunIfPlayerLeft(player);
+    }
+
     void OnPlayerMapChanged(Player* player) override
     {
         if (!sDungeonChallengeMgr->IsEnabled())
             return;
+
+        // Check if the player left an active challenge dungeon
+        FailRunIfPlayerLeft(player);
 
         Map* map = player->GetMap();
         if (!map || !map->IsDungeon())
@@ -202,6 +213,37 @@ public:
             notifyDeath(player);
         }
     }
+
+private:
+    void FailRunIfPlayerLeft(Player* player)
+    {
+        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRunByParticipant(player->GetGUID());
+        if (!run || run->state != CHALLENGE_STATE_RUNNING)
+            return;
+
+        // If the player is still in the challenge dungeon instance, do nothing
+        Map* map = player->GetMap();
+        if (map && map->IsDungeon() && map->GetInstanceId() == run->instanceId)
+            return;
+
+        // Player left the dungeon — fail the run
+        sDungeonChallengeMgr->FailRun(run);
+
+        DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
+        std::string dungeonName = info ? info->name : "Unknown";
+
+        // Notify all remaining participants
+        for (auto const& guid : run->participants)
+        {
+            if (Player* p = ObjectAccessor::FindPlayer(guid))
+            {
+                ChatHandler(p->GetSession()).PSendSysMessage(
+                    "|cffff0000[Dungeon Challenge]|r |cff69ccf0{}|r left the dungeon! "
+                    "Challenge |cffff8000{}|r Level |cffff8000{}|r has been ended.",
+                    player->GetName(), dungeonName, run->difficulty);
+            }
+        }
+    }
 };
 
 // ============================================================================
@@ -286,6 +328,15 @@ public:
             {
                 creatureData->respawnTimer -= diff;
             }
+        }
+
+        // --- RESPAWN COPY EVADE: despawn copies that leave combat ---
+        if (creatureData->isRespawnCopy && creature->IsAlive())
+        {
+            if (creature->IsInCombat())
+                creatureData->copyWasInCombat = true;
+            else if (creatureData->copyWasInCombat)
+                creature->DespawnOrUnsummon();
         }
 
         if (!creature->IsAlive() || creatureData->affixes.empty())
@@ -535,7 +586,7 @@ public:
                 if (Player* playerTarget = target->ToPlayer())
                 {
                     playerTarget->EnvironmentalDamage(DAMAGE_FIRE, 666);
-                    creature->CastSpell(playerTarget, SPELL_AFFIX_HELL_TOUCHED_DEBUFF, true);
+                    playerTarget->CastSpell(playerTarget, SPELL_AFFIX_HELL_TOUCHED_DEBUFF, true);
                 }
             }
         }
@@ -589,7 +640,7 @@ public:
                 if (Player* playerTarget = target->ToPlayer())
                 {
                     playerTarget->EnvironmentalDamage(DAMAGE_FIRE, 666);
-                    creature->CastSpell(playerTarget, SPELL_AFFIX_HELL_TOUCHED_DEBUFF, true);
+                    playerTarget->CastSpell(playerTarget, SPELL_AFFIX_HELL_TOUCHED_DEBUFF, true);
                 }
             }
         }

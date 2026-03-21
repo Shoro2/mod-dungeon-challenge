@@ -328,6 +328,16 @@ ChallengeRun* DungeonChallengeMgr::GetChallengeRun(uint32 instanceId)
     return nullptr;
 }
 
+ChallengeRun* DungeonChallengeMgr::GetChallengeRunByParticipant(ObjectGuid playerGuid)
+{
+    for (auto& pair : _activeRuns)
+    {
+        if (pair.second.participants.count(playerGuid))
+            return &pair.second;
+    }
+    return nullptr;
+}
+
 ChallengeRun* DungeonChallengeMgr::CreateChallengeRun(uint32 instanceId, uint32 mapId, uint32 difficulty, Player* leader)
 {
     ChallengeRun run;
