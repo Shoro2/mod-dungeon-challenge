@@ -180,6 +180,28 @@ public:
             return;
         }
 
+        // Store origin positions for post-completion teleport
+        auto storeOrigin = [&](Player* p)
+        {
+            WorldLocation const& entry = p->GetEntryPoint();
+            if (entry.GetMapId() != MAPID_INVALID)
+                run->participantOrigins[p->GetGUID()] = entry;
+            else
+                run->participantOrigins[p->GetGUID()] = WorldLocation(
+                    p->m_homebindMapId, p->m_homebindX, p->m_homebindY, p->m_homebindZ, 0.0f);
+        };
+
+        if (group)
+        {
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                if (Player* member = ref->GetSource())
+                    storeOrigin(member);
+        }
+        else
+        {
+            storeOrigin(player);
+        }
+
         // Start immediately - assign affixes and start the run
         sDungeonChallengeMgr->AssignAffixesToCreatures(run, map);
         sDungeonChallengeMgr->StartRun(run);
@@ -445,10 +467,12 @@ public:
         // --- CALL FOR HELP: pull allies within 30y when entering combat ---
         if (creatureData->HasAffix(AFFIX_CALL_FOR_HELP) && creature->IsInCombat() && !creatureData->hasCalled)
         {
-            creatureData->hasCalled = true;
             Unit* victim = creature->GetVictim();
+            if (!victim)
+                victim = creature->GetThreatMgr().getHostileTarget();
             if (victim)
             {
+                creatureData->hasCalled = true;
                 for (auto const& pair : map->GetCreatureBySpawnIdStore())
                 {
                     Creature* ally = pair.second;
@@ -505,7 +529,7 @@ class DungeonChallengeCreatureDeathScript : public PlayerScript
 public:
     DungeonChallengeCreatureDeathScript() : PlayerScript("DungeonChallengeCreatureDeathScript") { }
 
-    void OnPlayerCreatureKill(Player* /*killer*/, Creature* creature) override
+    void OnPlayerCreatureKill(Player* killer, Creature* creature) override
     {
         if (!sDungeonChallengeMgr->IsEnabled())
             return;
@@ -594,12 +618,12 @@ public:
         // --- LIL' BRO: split 1->2->4 (generation 0->1->2, stop at gen 2) ---
         if (creatureData->HasAffix(AFFIX_LIL_BRO) && creatureData->lilBroGeneration < 2)
         {
-            HandleLilBroDeath(creature, run, map);
+            HandleLilBroDeath(creature, run, map, killer);
         }
     }
 
 private:
-    void HandleLilBroDeath(Creature* creature, ChallengeRun* run, Map* map)
+    void HandleLilBroDeath(Creature* creature, ChallengeRun* run, Map* map, Player* killer)
     {
         auto* parentData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
         uint8 nextGeneration = parentData->lilBroGeneration + 1;
@@ -612,6 +636,11 @@ private:
 
         // Calculate HP for copies: 10% of the creature's max health
         uint32 copyHealth = std::max(1u, static_cast<uint32>(creature->GetMaxHealth() * 0.1f));
+
+        // Find a valid target: dead creature may have lost its victim
+        Unit* target = creature->GetVictim();
+        if (!target)
+            target = killer;
 
         for (uint32 i = 0; i < 2; ++i)
         {
@@ -630,6 +659,7 @@ private:
             copyData->lilBroGeneration = nextGeneration;
             copyData->affixes = parentData->affixes;
             copyData->processed = true;
+            copyData->affixesApplied = true;
 
             // Apply difficulty damage scaling
             copyData->extraDamageMultiplier = sDungeonChallengeMgr->GetDamageMultiplier(run->difficulty);
@@ -637,8 +667,12 @@ private:
             // Only original (generation 0) drops loot; all splits don't
             copyData->noLoot = true;
 
-            if (Unit* victim = creature->GetVictim())
-                copy->AI()->AttackStart(victim);
+            // Apply affix auras to copies (visual + effects)
+            for (auto const& affix : parentData->affixes)
+                sDungeonChallengeMgr->ApplyAffixToCreature(copy, affix, run->difficulty);
+
+            if (target)
+                copy->AI()->AttackStart(target);
         }
 
         Map::PlayerList const& players = map->GetPlayers();
@@ -816,6 +850,27 @@ public:
         if (run->state == CHALLENGE_STATE_COUNTDOWN)
         {
             HandleCountdown(run, map, diff);
+            return;
+        }
+
+        // Handle post-completion teleport (10 second delay)
+        if (run->state == CHALLENGE_STATE_COMPLETED || run->state == CHALLENGE_STATE_FAILED)
+        {
+            run->completionDelayMs += diff;
+            if (run->completionDelayMs >= 10000)
+            {
+                // Teleport all participants back to their origin positions
+                for (auto const& [guid, origin] : run->participantOrigins)
+                {
+                    if (Player* p = ObjectAccessor::FindPlayer(guid))
+                    {
+                        p->TeleportTo(origin);
+                        ChatHandler(p->GetSession()).PSendSysMessage(
+                            "|cff00ff00[Dungeon Challenge]|r You have been teleported back.");
+                    }
+                }
+                sDungeonChallengeMgr->RemoveChallengeRun(map->GetInstanceId());
+            }
             return;
         }
 

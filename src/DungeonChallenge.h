@@ -153,6 +153,8 @@ struct ChallengeRun
     std::unordered_set<ObjectGuid> participants;
     std::unordered_set<ObjectGuid> affixedCreatures;  // creatures that got affixes
     std::unordered_map<ObjectGuid, std::vector<DungeonChallengeAffix>> creatureAffixes;
+    std::unordered_map<ObjectGuid, WorldLocation> participantOrigins;  // pre-teleport positions
+    uint32 completionDelayMs = 0;          // countdown for post-completion teleport (ms)
 
     bool IsTimedOut() const
     {

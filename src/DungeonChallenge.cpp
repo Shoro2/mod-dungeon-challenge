@@ -449,6 +449,15 @@ void DungeonChallengeMgr::ProcessCreature(Creature* creature, Map* map)
     if (!mapData->run || mapData->run->state != CHALLENGE_STATE_RUNNING)
         return;
 
+    // Skip critters, pets, summons, friendly mobs — don't scale them
+    if (creature->GetCreatureTemplate()->type == CREATURE_TYPE_CRITTER
+        || creature->IsPet() || creature->IsSummon() || creature->IsTotem()
+        || creature->GetCreatureTemplate()->faction == 35)
+    {
+        creatureData->processed = true;
+        return;
+    }
+
     // Store original health before scaling
     creatureData->originalHealth = creature->GetMaxHealth();
 
@@ -484,7 +493,9 @@ void DungeonChallengeMgr::AssignAffixesToCreatures(ChallengeRun* run, Map* map)
         // Skip bosses (world bosses, dungeon bosses, rank 3+)
         if (creature->isWorldBoss() || creature->IsDungeonBoss() || creature->GetCreatureTemplate()->rank >= 3)
             continue;
-        // Skip critters and non-combat NPCs
+        // Skip critters (type 8), non-combat NPCs, and friendly mobs
+        if (creature->GetCreatureTemplate()->type == CREATURE_TYPE_CRITTER)
+            continue;
         if (creature->GetCreatureTemplate()->unit_class == 0)
             continue;
         if (creature->GetCreatureTemplate()->faction == 35) // friendly
