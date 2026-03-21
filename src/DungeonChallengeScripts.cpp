@@ -128,6 +128,47 @@ public:
             return;
         }
 
+        // Check if dungeon is heroic — challenges require heroic mode
+        if (map->GetDifficulty() == DUNGEON_DIFFICULTY_NORMAL)
+        {
+            // Set heroic difficulty so the next entry will be heroic
+            if (group)
+            {
+                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                {
+                    if (Player* member = ref->GetSource())
+                    {
+                        member->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
+                        member->SendDungeonDifficulty(true);
+                    }
+                }
+            }
+            else
+            {
+                player->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
+                player->SendDungeonDifficulty(false);
+            }
+
+            // Re-insert pending so player can re-enter without going back to stone
+            CharacterDatabase.DirectExecute(
+                "REPLACE INTO `dungeon_challenge_pending` "
+                "(`player_guid`, `map_id`, `difficulty`) VALUES ({}, {}, {})",
+                player->GetGUID().GetCounter(), pending->mapId, pending->difficulty);
+
+            // Teleport back to homebind
+            player->TeleportTo(player->m_homebindMapId,
+                player->m_homebindX, player->m_homebindY,
+                player->m_homebindZ, player->GetOrientation());
+
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Challenges are only available in |cffff8000heroic|r mode! "
+                "Your difficulty has been set to heroic. Please enter the dungeon again.");
+
+            if (!fromDb)
+                sDungeonChallengePending->RemovePending(player->GetGUID());
+            return;
+        }
+
         // Create the challenge run
         ChallengeRun* run = sDungeonChallengeMgr->CreateChallengeRun(
             instanceId, pending->mapId, pending->difficulty, player);
