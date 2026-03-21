@@ -4,6 +4,7 @@
 #include "GameTime.h"
 #include "ScriptedGossip.h"
 #include "SpellAuraEffects.h"
+#include "ParagonUtils.h"
 
 // ============================================================================
 // WorldScript - Configuration Loading & Startup
@@ -571,6 +572,36 @@ public:
 
         if (run->state != CHALLENGE_STATE_RUNNING)
             return;
+
+        // Award paragon XP for all mob kills during active challenges.
+        // Skip Lil' Bro copies (generation > 0) — they are split spawns,
+        // not real mobs. Bosses and regular mobs both award XP here because
+        // the paragon module's own CalculateXPGain skips most dungeon mobs
+        // (level < player level in normal mode, non-elite mobs get 0 XP).
+        {
+            auto* cData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+            bool isLilBroCopy = cData->lilBroGeneration > 0;
+
+            if (!isLilBroCopy && !creature->IsPet() && !creature->IsSummon())
+            {
+                uint32 xpAmount = IsChallengeBoss(creature) ? 3 : 1;
+
+                if (Group* group = killer->GetGroup())
+                {
+                    Group::MemberSlotList const& members = group->GetMemberSlots();
+                    for (auto const& slot : members)
+                    {
+                        Player* p = ObjectAccessor::GetPlayer(killer->GetMap(), slot.guid);
+                        if (p)
+                            IncreaseParagonXP(p, xpAmount);
+                    }
+                }
+                else
+                {
+                    IncreaseParagonXP(killer, xpAmount);
+                }
+            }
+        }
 
         // Check if this was a boss (rank >= 3, world boss, or dungeon boss)
         if (IsChallengeBoss(creature))
