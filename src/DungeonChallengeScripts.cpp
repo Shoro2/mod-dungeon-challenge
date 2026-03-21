@@ -152,7 +152,7 @@ public:
             ChatHandler(p->GetSession()).PSendSysMessage(
                 "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Level |cffff8000{}|r started! "
                 "Timer: |cffffff00{} minutes|r | Bosses: |cff00ff00{}|r | "
-                "~10%% of mobs have ALL available affixes!",
+                "~15%% of mobs have ALL available affixes!",
                 dungeonName, run->difficulty, run->timerDuration / 60, run->totalBosses);
         };
 
@@ -351,6 +351,55 @@ public:
 
         if (!creature->IsAlive() || creatureData->affixes.empty())
             return;
+
+        // --- AFFIX REAPPLICATION: reapply affixes after mob reset/evade ---
+        // When a creature evades, its auras are removed and HP resets to base.
+        // Detect this by checking if a known affix aura is missing.
+        if (creatureData->affixesApplied && !creature->IsInCombat())
+        {
+            // Check if any expected aura is gone (evade strips auras)
+            bool aurasLost = false;
+            for (auto const& affix : creatureData->affixes)
+            {
+                uint32 spellId = 0;
+                switch (affix)
+                {
+                    case AFFIX_SPEEDY:        spellId = SPELL_AFFIX_SPEEDY; break;
+                    case AFFIX_BIG_BOY:       spellId = SPELL_AFFIX_BIG_BOY; break;
+                    case AFFIX_CC_IMMUNITY:    spellId = SPELL_AFFIX_CC_IMMUNITY; break;
+                    case AFFIX_HEAVY_HITS:     spellId = SPELL_AFFIX_HEAVY_HITS; break;
+                    case AFFIX_BIGGER_BOY:     spellId = SPELL_AFFIX_BIGGER_BOY; break;
+                    case AFFIX_IMMOLATION:     spellId = SPELL_AFFIX_IMMOLATION; break;
+                    case AFFIX_HELL_TOUCHED:   spellId = SPELL_AFFIX_HELL_TOUCHED; break;
+                    case AFFIX_CALL_FOR_HELP:  spellId = SPELL_AFFIX_CALL_FOR_HELP; break;
+                    case AFFIX_LIL_BRO:        spellId = SPELL_AFFIX_LIL_BRO; break;
+                    case AFFIX_DAMAGE_REDUCE:  spellId = SPELL_AFFIX_DAMAGE_REDUCE; break;
+                    default: break;
+                }
+                if (spellId && !creature->HasAura(spellId))
+                {
+                    aurasLost = true;
+                    break;
+                }
+            }
+
+            if (aurasLost)
+            {
+                creatureData->affixesApplied = false;
+                creatureData->processed = false;
+            }
+        }
+
+        if (!creatureData->affixesApplied && !creatureData->affixes.empty())
+        {
+            // Mob was reset — reapply difficulty scaling + all affixes
+            sDungeonChallengeMgr->ScaleCreatureForDifficulty(creature, run->difficulty);
+            for (auto const& affix : creatureData->affixes)
+                sDungeonChallengeMgr->ApplyAffixToCreature(creature, affix, run->difficulty);
+
+            // Reset Call for Help flag so it can trigger again
+            creatureData->hasCalled = false;
+        }
 
         // --- CALL FOR HELP: pull allies within 30y when entering combat ---
         if (creatureData->HasAffix(AFFIX_CALL_FOR_HELP) && creature->IsInCombat() && !creatureData->hasCalled)

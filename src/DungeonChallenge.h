@@ -193,6 +193,7 @@ struct CreatureChallengeData : public DataMap::Base
     uint8 lilBroGeneration = 0;            // 0 = original, 1 = first split, 2 = second split (no more)
     bool noLoot = false;                   // for LIL_BRO non-lootable copy
     bool hasCalled = false;                // for CALL_FOR_HELP (already triggered?)
+    bool affixesApplied = false;           // true when affix auras/HP are actively applied
     uint32 immolationTimer = 0;            // for IMMOLATION periodic tick (ms)
     float incomingDamageReduction = 0.0f;  // for DAMAGE_REDUCE aura on nearby allies
 
