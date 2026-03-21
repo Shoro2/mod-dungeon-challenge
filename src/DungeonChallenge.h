@@ -275,6 +275,7 @@ public:
 
     // Challenge Run Management
     ChallengeRun* GetChallengeRun(uint32 instanceId);
+    ChallengeRun* GetChallengeRunByParticipant(ObjectGuid playerGuid);
     ChallengeRun* CreateChallengeRun(uint32 instanceId, uint32 mapId, uint32 difficulty, Player* leader);
     void RemoveChallengeRun(uint32 instanceId);
     void StartRun(ChallengeRun* run);
