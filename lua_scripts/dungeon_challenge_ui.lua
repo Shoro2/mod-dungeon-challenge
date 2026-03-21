@@ -958,6 +958,244 @@ function ShowSnapshotData(mapId, entries)
 end
 
 -- ============================================================================
+-- Active Run Tracker Frame
+-- ============================================================================
+
+local activeRunData = nil
+-- { dungeonName, difficulty, timerSeconds, totalBosses, affixString,
+--   startClientTime, bossesKilled, deathCount, penaltyTime,
+--   bossKills = { {name, time}, ... }, completed, completionTime, inTime }
+
+AIO.AddSavedVarChar("DChallenge_TrackerPos")
+DChallenge_TrackerPos = DChallenge_TrackerPos or {}
+
+local TRACKER_W = 250
+local TRK_PAD = 8
+local TRK_INNER = TRACKER_W - 2 * TRK_PAD
+
+local TrackerFrame = CreateFrame("Frame", "DCTrackerFrame", UIParent)
+TrackerFrame:SetWidth(TRACKER_W)
+TrackerFrame:SetHeight(180)
+TrackerFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -20, -180)
+TrackerFrame:SetMovable(true)
+TrackerFrame:EnableMouse(true)
+TrackerFrame:RegisterForDrag("LeftButton")
+TrackerFrame:SetScript("OnDragStart", TrackerFrame.StartMoving)
+TrackerFrame:SetScript("OnDragStop", TrackerFrame.StopMovingOrSizing)
+TrackerFrame:SetBackdrop({
+    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+    tile = true, tileSize = 16, edgeSize = 16,
+    insets = { left = 4, right = 4, top = 4, bottom = 4 }
+})
+TrackerFrame:SetBackdropColor(0.05, 0.05, 0.1, 0.92)
+TrackerFrame:SetBackdropBorderColor(0.4, 0.4, 0.8, 0.8)
+TrackerFrame:SetFrameStrata("HIGH")
+TrackerFrame:Hide()
+
+AIO.SavePosition(TrackerFrame, true)
+
+-- Close button
+local trkClose = CreateFrame("Button", nil, TrackerFrame, "UIPanelCloseButton")
+trkClose:SetPoint("TOPRIGHT", 2, 2)
+trkClose:SetScale(0.65)
+trkClose:SetScript("OnClick", function() TrackerFrame:Hide() end)
+
+-- Title: "+Level - DungeonName"
+local trkTitle = TrackerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+trkTitle:SetPoint("TOPLEFT", TRK_PAD, -TRK_PAD)
+trkTitle:SetWidth(TRK_INNER - 16)
+trkTitle:SetJustifyH("LEFT")
+
+-- Affixes
+local trkAffixes = TrackerFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+trkAffixes:SetPoint("TOPLEFT", trkTitle, "BOTTOMLEFT", 0, -1)
+trkAffixes:SetWidth(TRK_INNER)
+trkAffixes:SetJustifyH("LEFT")
+
+-- Separator 1
+local trkSep1 = TrackerFrame:CreateTexture(nil, "ARTWORK")
+trkSep1:SetPoint("TOPLEFT", trkAffixes, "BOTTOMLEFT", -2, -3)
+trkSep1:SetWidth(TRK_INNER + 4)
+trkSep1:SetHeight(1)
+trkSep1:SetTexture(0.4, 0.4, 0.6, 0.5)
+
+-- Timer remaining (large)
+local trkTimer = TrackerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+trkTimer:SetPoint("TOPLEFT", trkSep1, "BOTTOMLEFT", 2, -4)
+trkTimer:SetJustifyH("LEFT")
+
+-- Timer detail (elapsed / total)
+local trkTimerDetail = TrackerFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+trkTimerDetail:SetPoint("LEFT", trkTimer, "RIGHT", 6, 0)
+trkTimerDetail:SetJustifyH("LEFT")
+
+-- +2/+3 thresholds
+local trkThresh = TrackerFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+trkThresh:SetPoint("TOPLEFT", trkTimer, "BOTTOMLEFT", 0, -2)
+trkThresh:SetWidth(TRK_INNER)
+trkThresh:SetJustifyH("LEFT")
+
+-- Separator 2
+local trkSep2 = TrackerFrame:CreateTexture(nil, "ARTWORK")
+trkSep2:SetPoint("TOPLEFT", trkThresh, "BOTTOMLEFT", -2, -3)
+trkSep2:SetWidth(TRK_INNER + 4)
+trkSep2:SetHeight(1)
+trkSep2:SetTexture(0.4, 0.4, 0.6, 0.5)
+
+-- Boss list (multi-line)
+local trkBosses = TrackerFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+trkBosses:SetPoint("TOPLEFT", trkSep2, "BOTTOMLEFT", 2, -3)
+trkBosses:SetWidth(TRK_INNER)
+trkBosses:SetJustifyH("LEFT")
+
+-- Separator 3
+local trkSep3 = TrackerFrame:CreateTexture(nil, "ARTWORK")
+trkSep3:SetPoint("TOPLEFT", trkBosses, "BOTTOMLEFT", -2, -3)
+trkSep3:SetWidth(TRK_INNER + 4)
+trkSep3:SetHeight(1)
+trkSep3:SetTexture(0.4, 0.4, 0.6, 0.5)
+
+-- Deaths
+local trkDeaths = TrackerFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+trkDeaths:SetPoint("TOPLEFT", trkSep3, "BOTTOMLEFT", 2, -3)
+trkDeaths:SetWidth(TRK_INNER)
+trkDeaths:SetJustifyH("LEFT")
+
+-- Helper: format seconds as MM:SS (with floor)
+local function FmtTime(sec)
+    sec = math.max(0, math.floor(sec))
+    return string.format("%d:%02d", math.floor(sec / 60), sec % 60)
+end
+
+-- Update tracker display (called from OnUpdate)
+local function UpdateTrackerDisplay()
+    if not activeRunData then return end
+
+    local run = activeRunData
+    local clientElapsed = GetTime() - run.startClientTime
+    local effectiveElapsed = clientElapsed + run.penaltyTime
+    local remaining = run.timerSeconds - effectiveElapsed
+
+    -- If completed, freeze at completion time
+    if run.completed then
+        effectiveElapsed = run.completionTime
+        remaining = run.timerSeconds - effectiveElapsed
+    end
+
+    -- Title
+    local diffHex = DifficultyColorHex(run.difficulty)
+    trkTitle:SetText(string.format("%s+%d|r - |cffffffff%s|r",
+        diffHex, run.difficulty, run.dungeonName))
+
+    -- Affixes
+    trkAffixes:SetText("|cffff8000" .. run.affixString .. "|r")
+
+    -- Timer color
+    local timerColor
+    if run.completed then
+        timerColor = run.inTime and "|cff00ff00" or "|cffff0000"
+    elseif remaining > run.timerSeconds * 0.4 then
+        timerColor = "|cff00ff00"
+    elseif remaining > run.timerSeconds * 0.2 then
+        timerColor = "|cffffff00"
+    elseif remaining > 0 then
+        timerColor = "|cffff0000"
+    else
+        timerColor = "|cff888888"
+    end
+
+    -- Timer text
+    if run.completed then
+        local tag = run.inTime and "COMPLETED" or "OVER TIME"
+        trkTimer:SetText(string.format("%s%s %s|r",
+            timerColor, tag, FmtTime(effectiveElapsed)))
+        trkTimerDetail:SetText("")
+    else
+        trkTimer:SetText(string.format("%s%s|r",
+            timerColor, FmtTime(math.max(0, remaining))))
+        trkTimerDetail:SetText(string.format("|cffaaaaaa(%s / %s)|r",
+            FmtTime(effectiveElapsed), FmtTime(run.timerSeconds)))
+    end
+
+    -- +2/+3 thresholds (complete within 80%/60% of timer)
+    local thresh2 = run.timerSeconds * 0.8
+    local thresh3 = run.timerSeconds * 0.6
+    local rem2 = thresh2 - effectiveElapsed
+    local rem3 = thresh3 - effectiveElapsed
+    local c2 = rem2 > 0 and "|cff00ff00" or "|cffff0000"
+    local c3 = rem3 > 0 and "|cff00ff00" or "|cffff0000"
+    trkThresh:SetText(string.format(
+        "%s+2 (%s): %s|r  %s+3 (%s): %s|r",
+        c2, FmtTime(thresh2), FmtTime(math.max(0, rem2)),
+        c3, FmtTime(thresh3), FmtTime(math.max(0, rem3))))
+
+    -- Boss progress
+    local bossLines = {}
+    for i = 1, run.totalBosses do
+        local bk = run.bossKills[i]
+        if bk then
+            table.insert(bossLines, string.format(
+                "|cff00ff00- 1/1 %s|r  |cffaaaaaa%s|r",
+                bk.name, FmtTime(bk.time)))
+        else
+            table.insert(bossLines, string.format(
+                "|cff666666- 0/1 Boss %d|r", i))
+        end
+    end
+    trkBosses:SetText(table.concat(bossLines, "\n"))
+
+    -- Deaths
+    if run.deathCount > 0 then
+        trkDeaths:SetText(string.format(
+            "|cffff0000%d Deaths|r  |cffff4444-%s|r",
+            run.deathCount, FmtTime(run.penaltyTime)))
+    else
+        trkDeaths:SetText("|cff00ff000 Deaths|r")
+    end
+
+    -- Adjust frame height dynamically
+    -- Base: pad(8) + title(16) + affixes(12) + sep(7) + timer(18) + thresh(14) + sep(7) + sep(7) + deaths(14) + pad(8)
+    local bossHeight = run.totalBosses * 14
+    local height = 8 + 16 + 12 + 7 + 18 + 14 + 7 + bossHeight + 7 + 14 + 8
+    TrackerFrame:SetHeight(height)
+end
+
+-- OnUpdate: tick tracker display
+local trackerUpdateTimer = 0
+TrackerFrame:SetScript("OnUpdate", function(self, elapsed)
+    trackerUpdateTimer = trackerUpdateTimer + elapsed
+    if trackerUpdateTimer >= 0.1 then
+        trackerUpdateTimer = 0
+        UpdateTrackerDisplay()
+    end
+end)
+
+-- Auto-hide timer for completed runs
+local autoHideTimer = nil
+
+local function StartAutoHide(delay)
+    autoHideTimer = delay
+    TrackerFrame:SetScript("OnUpdate", function(self, elapsed)
+        -- Continue updating display
+        trackerUpdateTimer = trackerUpdateTimer + elapsed
+        if trackerUpdateTimer >= 0.1 then
+            trackerUpdateTimer = 0
+            UpdateTrackerDisplay()
+        end
+        -- Count down auto-hide
+        if autoHideTimer then
+            autoHideTimer = autoHideTimer - elapsed
+            if autoHideTimer <= 0 then
+                autoHideTimer = nil
+                TrackerFrame:Hide()
+                activeRunData = nil
+            end
+        end
+    end)
+end
+
+-- ============================================================================
 -- AIO Client Handlers (called from server)
 -- ============================================================================
 
@@ -1061,6 +1299,79 @@ DC_ClientHandlers.Error = function(player, errorMsg)
         "|cffff0000[Dungeon Challenge]|r " .. (errorMsg or "Unknown error"))
 end
 
+-- ============================================================================
+-- Active Run Tracker Handlers
+-- ============================================================================
+
+-- Server signals run has started (player entered dungeon)
+DC_ClientHandlers.RunStart = function(player, dungeonName, difficulty, timerSeconds, totalBosses, affixString)
+    activeRunData = {
+        dungeonName = dungeonName or "Unknown",
+        difficulty = difficulty or 1,
+        timerSeconds = timerSeconds or 1800,
+        totalBosses = totalBosses or 3,
+        affixString = affixString or "None",
+        startClientTime = GetTime(),
+        bossesKilled = 0,
+        deathCount = 0,
+        penaltyTime = 0,
+        bossKills = {},
+        completed = false,
+        completionTime = 0,
+        inTime = false,
+    }
+    autoHideTimer = nil
+    TrackerFrame:Show()
+    DEFAULT_CHAT_FRAME:AddMessage(string.format(
+        "|cff00ff00[Dungeon Challenge]|r Tracker active: |cffff8000%s|r +%d",
+        dungeonName or "?", difficulty or 0))
+end
+
+-- Boss killed notification
+DC_ClientHandlers.BossKilled = function(player, bossName, bossIndex, killElapsed)
+    if not activeRunData then return end
+    activeRunData.bossesKilled = bossIndex or (activeRunData.bossesKilled + 1)
+    table.insert(activeRunData.bossKills, {
+        name = bossName or "Unknown Boss",
+        time = killElapsed or 0,
+    })
+    UpdateTrackerDisplay()
+end
+
+-- Death update notification
+DC_ClientHandlers.DeathUpdate = function(player, deathCount, penaltyTime)
+    if not activeRunData then return end
+    activeRunData.deathCount = deathCount or 0
+    activeRunData.penaltyTime = penaltyTime or 0
+    UpdateTrackerDisplay()
+end
+
+-- Run completed (all bosses killed)
+DC_ClientHandlers.RunCompleted = function(player, totalElapsed, inTime)
+    if not activeRunData then return end
+    activeRunData.completed = true
+    activeRunData.completionTime = totalElapsed or 0
+    activeRunData.inTime = inTime
+    UpdateTrackerDisplay()
+
+    if inTime then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "|cff00ff00[Dungeon Challenge]|r |cff00ff00COMPLETED IN TIME!|r")
+    else
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "|cff00ff00[Dungeon Challenge]|r |cffff0000Completed over time.|r")
+    end
+
+    -- Auto-hide tracker after 60 seconds
+    StartAutoHide(60)
+end
+
+-- Run ended (player left dungeon or run was abandoned)
+DC_ClientHandlers.RunEnd = function(player)
+    activeRunData = nil
+    TrackerFrame:Hide()
+end
+
 -- Only register once — avoids AIO "already registered" assert on addon reload
 if not DC_HandlersRegistered then
     AIO.AddHandlers("DungeonChallenge", DC_ClientHandlers)
@@ -1074,6 +1385,22 @@ end
 SLASH_DUNGEONCHALLENGE1 = "/dc"
 SLASH_DUNGEONCHALLENGE2 = "/dungeonchallenge"
 SlashCmdList["DUNGEONCHALLENGE"] = function(msg)
+    msg = (msg or ""):lower():trim()
+
+    -- /dc tracker — toggle active run tracker
+    if msg == "tracker" then
+        if TrackerFrame:IsShown() then
+            TrackerFrame:Hide()
+        elseif activeRunData then
+            TrackerFrame:Show()
+        else
+            DEFAULT_CHAT_FRAME:AddMessage(
+                "|cff00ff00[Dungeon Challenge]|r No active run to track.")
+        end
+        return
+    end
+
+    -- Default: toggle main UI
     if MainFrame:IsShown() then
         MainFrame:Hide()
     else
