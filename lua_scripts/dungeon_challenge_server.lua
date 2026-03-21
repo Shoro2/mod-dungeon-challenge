@@ -281,7 +281,7 @@ ServerHandlers.StartChallenge = function(player, mapId, difficulty)
         .. "(`player_guid`, `map_id`, `difficulty`) VALUES (%d, %d, %d)",
         guid, mapId, difficulty))
 
-    -- Announce and teleport
+    -- Announce, unbind instances, and teleport
     if group then
         local members = group:GetMembers()
         for _, member in ipairs(members) do
@@ -294,6 +294,9 @@ ServerHandlers.StartChallenge = function(player, mapId, difficulty)
             AIO.Handle(member, "DungeonChallenge", "ChallengeStarted",
                 dungeon.name, difficulty, player:GetName())
 
+            -- Clear all instance lockouts before teleporting
+            member:UnbindAllInstances()
+
             member:Teleport(mapId,
                 dungeon.entranceX, dungeon.entranceY,
                 dungeon.entranceZ, dungeon.entranceO)
@@ -301,6 +304,9 @@ ServerHandlers.StartChallenge = function(player, mapId, difficulty)
     else
         AIO.Handle(player, "DungeonChallenge", "ChallengeStarted",
             dungeon.name, difficulty, player:GetName())
+
+        -- Clear all instance lockouts before teleporting
+        player:UnbindAllInstances()
 
         player:Teleport(mapId,
             dungeon.entranceX, dungeon.entranceY,
