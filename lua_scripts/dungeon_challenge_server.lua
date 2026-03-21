@@ -383,12 +383,23 @@ RegisterPlayerEvent(28, function(event, player)  -- PLAYER_EVENT_ON_MAP_CHANGE
     end
 end)
 
+-- Helper: Boss detection matching C++ IsChallengeBoss()
+-- C++ checks: rank >= 3 OR isWorldBoss() OR IsDungeonBoss()
+-- IsDungeonBoss() checks flags_extra set dynamically by instance scripts
+local function IsChallengeBoss(creature)
+    if creature:GetRank() >= 3 then return true end
+    if creature:IsWorldBoss() then return true end
+    -- IsDungeonBoss may not exist in all Eluna versions; check safely
+    if creature.IsDungeonBoss and creature:IsDungeonBoss() then return true end
+    return false
+end
+
 -- Detect boss kills: update tracker for all participants
 RegisterPlayerEvent(7, function(event, player, creature)  -- PLAYER_EVENT_ON_KILL_CREATURE
     local guid = player:GetGUIDLow()
     local run = trackedRuns[guid]
     if not run or run.state ~= "running" then return end
-    if creature:GetRank() < 3 then return end
+    if not IsChallengeBoss(creature) then return end
 
     -- Prevent double-counting (hook fires per player in group)
     local cGuid = creature:GetGUIDLow()

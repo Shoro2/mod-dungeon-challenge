@@ -153,6 +153,8 @@ struct ChallengeRun
     std::unordered_set<ObjectGuid> participants;
     std::unordered_set<ObjectGuid> affixedCreatures;  // creatures that got affixes
     std::unordered_map<ObjectGuid, std::vector<DungeonChallengeAffix>> creatureAffixes;
+    std::unordered_map<ObjectGuid, WorldLocation> participantOrigins;  // pre-teleport positions
+    uint32 completionDelayMs = 0;          // countdown for post-completion teleport (ms)
 
     bool IsTimedOut() const
     {
@@ -193,6 +195,7 @@ struct CreatureChallengeData : public DataMap::Base
     uint8 lilBroGeneration = 0;            // 0 = original, 1 = first split, 2 = second split (no more)
     bool noLoot = false;                   // for LIL_BRO non-lootable copy
     bool hasCalled = false;                // for CALL_FOR_HELP (already triggered?)
+    bool affixesApplied = false;           // true when affix auras/HP are actively applied
     uint32 immolationTimer = 0;            // for IMMOLATION periodic tick (ms)
     float incomingDamageReduction = 0.0f;  // for DAMAGE_REDUCE aura on nearby allies
 

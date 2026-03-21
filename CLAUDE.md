@@ -4,7 +4,7 @@ Technical documentation for AI assistants working on this module.
 
 ## Module Overview
 
-**mod-dungeon-challenge** is an AzerothCore 3.3.5a module that implements a Mythic+-style dungeon challenge system. Players click a **Dungeon Challenge Stone** (GameObject) to select a dungeon and difficulty level (1-100) via a **Lua gossip UI**, are teleported (solo or group), and must defeat all bosses within a timer. ~10% of dungeon mobs receive ALL available affixes for the current difficulty level (every 10 levels adds +1 affix to the pool).
+**mod-dungeon-challenge** is an AzerothCore 3.3.5a module that implements a Mythic+-style dungeon challenge system. Players click a **Dungeon Challenge Stone** (GameObject) to select a dungeon and difficulty level (1-100) via a **Lua gossip UI**, are teleported (solo or group), and must defeat all bosses within a timer. ~15% of dungeon mobs receive ALL available affixes for the current difficulty level (every 10 levels adds +1 affix to the pool).
 
 **Key design decisions:**
 - **Solo entry supported** — no group required, 1-5 players
@@ -137,7 +137,7 @@ AllBossesKilled()
 | Config Key | Default | Description |
 |------------|---------|-------------|
 | `DungeonChallenge.Enable` | 1 | Module on/off |
-| `DungeonChallenge.AffixPercentage` | 10 | % of mobs with ALL available affixes |
+| `DungeonChallenge.AffixPercentage` | 15 | % of mobs with ALL available affixes |
 | `DungeonChallenge.MaxDifficulty` | 100 | Maximum difficulty level (every 10 levels +1 affix) |
 | `DungeonChallenge.HealthMultiplierPerLevel` | 15 | +HP% per level |
 | `DungeonChallenge.DamageMultiplierPerLevel` | 8 | +DMG% per level (via UnitScript hooks) |

@@ -64,7 +64,7 @@
 #
 
 DungeonChallenge.Enable = 1
-DungeonChallenge.AffixPercentage = 10
+DungeonChallenge.AffixPercentage = 15
 DungeonChallenge.MaxDifficulty = 100
 DungeonChallenge.HealthMultiplierPerLevel = 15
 DungeonChallenge.DamageMultiplierPerLevel = 8

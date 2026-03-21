@@ -128,6 +128,47 @@ public:
             return;
         }
 
+        // Check if dungeon is heroic — challenges require heroic mode
+        if (map->GetDifficulty() == DUNGEON_DIFFICULTY_NORMAL)
+        {
+            // Set heroic difficulty so the next entry will be heroic
+            if (group)
+            {
+                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                {
+                    if (Player* member = ref->GetSource())
+                    {
+                        member->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
+                        member->SendDungeonDifficulty(true);
+                    }
+                }
+            }
+            else
+            {
+                player->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
+                player->SendDungeonDifficulty(false);
+            }
+
+            // Re-insert pending so player can re-enter without going back to stone
+            CharacterDatabase.DirectExecute(
+                "REPLACE INTO `dungeon_challenge_pending` "
+                "(`player_guid`, `map_id`, `difficulty`) VALUES ({}, {}, {})",
+                player->GetGUID().GetCounter(), pending->mapId, pending->difficulty);
+
+            // Teleport back to homebind
+            player->TeleportTo(player->m_homebindMapId,
+                player->m_homebindX, player->m_homebindY,
+                player->m_homebindZ, player->GetOrientation());
+
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Challenges are only available in |cffff8000heroic|r mode! "
+                "Your difficulty has been set to heroic. Please enter the dungeon again.");
+
+            if (!fromDb)
+                sDungeonChallengePending->RemovePending(player->GetGUID());
+            return;
+        }
+
         // Create the challenge run
         ChallengeRun* run = sDungeonChallengeMgr->CreateChallengeRun(
             instanceId, pending->mapId, pending->difficulty, player);
@@ -137,6 +178,28 @@ public:
             if (!fromDb)
                 sDungeonChallengePending->RemovePending(player->GetGUID());
             return;
+        }
+
+        // Store origin positions for post-completion teleport
+        auto storeOrigin = [&](Player* p)
+        {
+            WorldLocation const& entry = p->GetEntryPoint();
+            if (entry.GetMapId() != MAPID_INVALID)
+                run->participantOrigins[p->GetGUID()] = entry;
+            else
+                run->participantOrigins[p->GetGUID()] = WorldLocation(
+                    p->m_homebindMapId, p->m_homebindX, p->m_homebindY, p->m_homebindZ, 0.0f);
+        };
+
+        if (group)
+        {
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                if (Player* member = ref->GetSource())
+                    storeOrigin(member);
+        }
+        else
+        {
+            storeOrigin(player);
         }
 
         // Start immediately - assign affixes and start the run
@@ -152,7 +215,7 @@ public:
             ChatHandler(p->GetSession()).PSendSysMessage(
                 "|cff00ff00[Dungeon Challenge]|r |cffff8000{}|r Level |cffff8000{}|r started! "
                 "Timer: |cffffff00{} minutes|r | Bosses: |cff00ff00{}|r | "
-                "~10%% of mobs have ALL available affixes!",
+                "~15%% of mobs have ALL available affixes!",
                 dungeonName, run->difficulty, run->timerDuration / 60, run->totalBosses);
         };
 
@@ -352,13 +415,64 @@ public:
         if (!creature->IsAlive() || creatureData->affixes.empty())
             return;
 
+        // --- AFFIX REAPPLICATION: reapply affixes after mob reset/evade ---
+        // When a creature evades, its auras are removed and HP resets to base.
+        // Detect this by checking if a known affix aura is missing.
+        if (creatureData->affixesApplied && !creature->IsInCombat())
+        {
+            // Check if any expected aura is gone (evade strips auras)
+            bool aurasLost = false;
+            for (auto const& affix : creatureData->affixes)
+            {
+                uint32 spellId = 0;
+                switch (affix)
+                {
+                    case AFFIX_SPEEDY:        spellId = SPELL_AFFIX_SPEEDY; break;
+                    case AFFIX_BIG_BOY:       spellId = SPELL_AFFIX_BIG_BOY; break;
+                    case AFFIX_CC_IMMUNITY:    spellId = SPELL_AFFIX_CC_IMMUNITY; break;
+                    case AFFIX_HEAVY_HITS:     spellId = SPELL_AFFIX_HEAVY_HITS; break;
+                    case AFFIX_BIGGER_BOY:     spellId = SPELL_AFFIX_BIGGER_BOY; break;
+                    case AFFIX_IMMOLATION:     spellId = SPELL_AFFIX_IMMOLATION; break;
+                    case AFFIX_HELL_TOUCHED:   spellId = SPELL_AFFIX_HELL_TOUCHED; break;
+                    case AFFIX_CALL_FOR_HELP:  spellId = SPELL_AFFIX_CALL_FOR_HELP; break;
+                    case AFFIX_LIL_BRO:        spellId = SPELL_AFFIX_LIL_BRO; break;
+                    case AFFIX_DAMAGE_REDUCE:  spellId = SPELL_AFFIX_DAMAGE_REDUCE; break;
+                    default: break;
+                }
+                if (spellId && !creature->HasAura(spellId))
+                {
+                    aurasLost = true;
+                    break;
+                }
+            }
+
+            if (aurasLost)
+            {
+                creatureData->affixesApplied = false;
+                creatureData->processed = false;
+            }
+        }
+
+        if (!creatureData->affixesApplied && !creatureData->affixes.empty())
+        {
+            // Mob was reset — reapply difficulty scaling + all affixes
+            sDungeonChallengeMgr->ScaleCreatureForDifficulty(creature, run->difficulty);
+            for (auto const& affix : creatureData->affixes)
+                sDungeonChallengeMgr->ApplyAffixToCreature(creature, affix, run->difficulty);
+
+            // Reset Call for Help flag so it can trigger again
+            creatureData->hasCalled = false;
+        }
+
         // --- CALL FOR HELP: pull allies within 30y when entering combat ---
         if (creatureData->HasAffix(AFFIX_CALL_FOR_HELP) && creature->IsInCombat() && !creatureData->hasCalled)
         {
-            creatureData->hasCalled = true;
             Unit* victim = creature->GetVictim();
+            if (!victim)
+                victim = creature->GetThreatMgr().getHostileTarget();
             if (victim)
             {
+                creatureData->hasCalled = true;
                 for (auto const& pair : map->GetCreatureBySpawnIdStore())
                 {
                     Creature* ally = pair.second;
@@ -415,7 +529,7 @@ class DungeonChallengeCreatureDeathScript : public PlayerScript
 public:
     DungeonChallengeCreatureDeathScript() : PlayerScript("DungeonChallengeCreatureDeathScript") { }
 
-    void OnPlayerCreatureKill(Player* /*killer*/, Creature* creature) override
+    void OnPlayerCreatureKill(Player* killer, Creature* creature) override
     {
         if (!sDungeonChallengeMgr->IsEnabled())
             return;
@@ -504,12 +618,12 @@ public:
         // --- LIL' BRO: split 1->2->4 (generation 0->1->2, stop at gen 2) ---
         if (creatureData->HasAffix(AFFIX_LIL_BRO) && creatureData->lilBroGeneration < 2)
         {
-            HandleLilBroDeath(creature, run, map);
+            HandleLilBroDeath(creature, run, map, killer);
         }
     }
 
 private:
-    void HandleLilBroDeath(Creature* creature, ChallengeRun* run, Map* map)
+    void HandleLilBroDeath(Creature* creature, ChallengeRun* run, Map* map, Player* killer)
     {
         auto* parentData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
         uint8 nextGeneration = parentData->lilBroGeneration + 1;
@@ -522,6 +636,11 @@ private:
 
         // Calculate HP for copies: 10% of the creature's max health
         uint32 copyHealth = std::max(1u, static_cast<uint32>(creature->GetMaxHealth() * 0.1f));
+
+        // Find a valid target: dead creature may have lost its victim
+        Unit* target = creature->GetVictim();
+        if (!target)
+            target = killer;
 
         for (uint32 i = 0; i < 2; ++i)
         {
@@ -540,6 +659,7 @@ private:
             copyData->lilBroGeneration = nextGeneration;
             copyData->affixes = parentData->affixes;
             copyData->processed = true;
+            copyData->affixesApplied = true;
 
             // Apply difficulty damage scaling
             copyData->extraDamageMultiplier = sDungeonChallengeMgr->GetDamageMultiplier(run->difficulty);
@@ -547,8 +667,12 @@ private:
             // Only original (generation 0) drops loot; all splits don't
             copyData->noLoot = true;
 
-            if (Unit* victim = creature->GetVictim())
-                copy->AI()->AttackStart(victim);
+            // Apply affix auras to copies (visual + effects)
+            for (auto const& affix : parentData->affixes)
+                sDungeonChallengeMgr->ApplyAffixToCreature(copy, affix, run->difficulty);
+
+            if (target)
+                copy->AI()->AttackStart(target);
         }
 
         Map::PlayerList const& players = map->GetPlayers();
@@ -726,6 +850,27 @@ public:
         if (run->state == CHALLENGE_STATE_COUNTDOWN)
         {
             HandleCountdown(run, map, diff);
+            return;
+        }
+
+        // Handle post-completion teleport (10 second delay)
+        if (run->state == CHALLENGE_STATE_COMPLETED || run->state == CHALLENGE_STATE_FAILED)
+        {
+            run->completionDelayMs += diff;
+            if (run->completionDelayMs >= 10000)
+            {
+                // Teleport all participants back to their origin positions
+                for (auto const& [guid, origin] : run->participantOrigins)
+                {
+                    if (Player* p = ObjectAccessor::FindPlayer(guid))
+                    {
+                        p->TeleportTo(origin);
+                        ChatHandler(p->GetSession()).PSendSysMessage(
+                            "|cff00ff00[Dungeon Challenge]|r You have been teleported back.");
+                    }
+                }
+                sDungeonChallengeMgr->RemoveChallengeRun(map->GetInstanceId());
+            }
             return;
         }
 

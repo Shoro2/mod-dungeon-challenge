@@ -18,7 +18,7 @@ DungeonChallengeMgr* DungeonChallengeMgr::Instance()
 
 DungeonChallengeMgr::DungeonChallengeMgr()
     : _enabled(true)
-    , _affixPercentage(10)
+    , _affixPercentage(15)
     , _maxDifficulty(100)
     , _healthMultPerLevel(0.15f)
     , _damageMultPerLevel(0.08f)
@@ -40,7 +40,7 @@ DungeonChallengeMgr::DungeonChallengeMgr()
 void DungeonChallengeMgr::LoadConfig(bool /*reload*/)
 {
     _enabled = sConfigMgr->GetOption<bool>("DungeonChallenge.Enable", true);
-    _affixPercentage = sConfigMgr->GetOption<uint32>("DungeonChallenge.AffixPercentage", 10);
+    _affixPercentage = sConfigMgr->GetOption<uint32>("DungeonChallenge.AffixPercentage", 15);
     _maxDifficulty = sConfigMgr->GetOption<uint32>("DungeonChallenge.MaxDifficulty", 100);
     _healthMultPerLevel = sConfigMgr->GetOption<float>("DungeonChallenge.HealthMultiplierPerLevel", 15.0f) / 100.0f;
     _damageMultPerLevel = sConfigMgr->GetOption<float>("DungeonChallenge.DamageMultiplierPerLevel", 8.0f) / 100.0f;
@@ -449,6 +449,15 @@ void DungeonChallengeMgr::ProcessCreature(Creature* creature, Map* map)
     if (!mapData->run || mapData->run->state != CHALLENGE_STATE_RUNNING)
         return;
 
+    // Skip critters, pets, summons, friendly mobs — don't scale them
+    if (creature->GetCreatureTemplate()->type == CREATURE_TYPE_CRITTER
+        || creature->IsPet() || creature->IsSummon() || creature->IsTotem()
+        || creature->GetCreatureTemplate()->faction == 35)
+    {
+        creatureData->processed = true;
+        return;
+    }
+
     // Store original health before scaling
     creatureData->originalHealth = creature->GetMaxHealth();
 
@@ -484,7 +493,9 @@ void DungeonChallengeMgr::AssignAffixesToCreatures(ChallengeRun* run, Map* map)
         // Skip bosses (world bosses, dungeon bosses, rank 3+)
         if (creature->isWorldBoss() || creature->IsDungeonBoss() || creature->GetCreatureTemplate()->rank >= 3)
             continue;
-        // Skip critters and non-combat NPCs
+        // Skip critters (type 8), non-combat NPCs, and friendly mobs
+        if (creature->GetCreatureTemplate()->type == CREATURE_TYPE_CRITTER)
+            continue;
         if (creature->GetCreatureTemplate()->unit_class == 0)
             continue;
         if (creature->GetCreatureTemplate()->faction == 35) // friendly
@@ -512,12 +523,13 @@ void DungeonChallengeMgr::AssignAffixesToCreatures(ChallengeRun* run, Map* map)
         auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
         creatureData->affixes = availableAffixes;
 
-        // Apply each affix to the creature
+        // Scale creature stats for difficulty FIRST (base HP scaling)
+        ScaleCreatureForDifficulty(creature, run->difficulty);
+
+        // Apply each affix AFTER scaling (so Big Boy/Bigger Boy +50% HP
+        // is applied on top of the already-scaled health)
         for (auto const& affix : availableAffixes)
             ApplyAffixToCreature(creature, affix, run->difficulty);
-
-        // Scale creature stats for difficulty (once, after all affixes)
-        ScaleCreatureForDifficulty(creature, run->difficulty);
     }
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Assigned affixes to {}/{} creatures in instance {}.",
@@ -605,7 +617,9 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
     }
 
     // NOTE: ScaleCreatureForDifficulty is called separately in AssignAffixesToCreatures
-    // after all affixes have been applied, so we don't call it here per-affix.
+    // BEFORE affixes, so affix HP bonuses stack on top of difficulty scaling.
+
+    creatureData->affixesApplied = true;
 
     if (info)
     {
