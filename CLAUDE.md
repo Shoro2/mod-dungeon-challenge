@@ -67,8 +67,8 @@ mod-dungeon-challenge/
 
 | File | Side | Purpose |
 |------|------|---------|
-| `lua_scripts/dungeon_challenge_server.lua` | Server | AIO server script: loads dungeon data from DB, registers AIO handlers for client requests (leaderboard, my runs, snapshots, start challenge), sends initial data on login via `AIO.AddOnInit`, handles GameObject gossip → opens client UI |
-| `lua_scripts/dungeon_challenge_ui.lua` | Client | AIO client addon (sent to WoW client): creates a full UI frame with tabs (Dungeons, Leaderboard, My Runs, Records), dungeon/difficulty selection, confirm panel, slash command `/dc`. All UI is rendered as native WoW frames. |
+| `lua_scripts/dungeon_challenge_server.lua` | Server | AIO server script: loads dungeon data from DB, registers AIO handlers for client requests (leaderboard, my runs, snapshots, start challenge), sends initial data on login via `AIO.AddOnInit`, handles GameObject gossip → opens client UI, **tracks active runs** and sends real-time updates (RunStart, BossKilled, DeathUpdate, RunCompleted, RunEnd) to client tracker via Eluna hooks |
+| `lua_scripts/dungeon_challenge_ui.lua` | Client | AIO client addon (sent to WoW client): creates a full UI frame with tabs (Dungeons, Leaderboard, My Runs, Records), dungeon/difficulty selection, confirm panel, **active run tracker** (timer, bosses, deaths, affixes, +2/+3 thresholds), slash commands `/dc` and `/dc tracker`. All UI is rendered as native WoW frames. |
 | `lua_scripts/dungeon_challenge_gameobject.lua` | Server | **[DEPRECATED]** Old gossip-menu-based UI. Replaced by the AIO scripts above. |
 
 **AIO Architecture**: The server script registers the client file via `AIO.AddAddon()`. On login, dungeon data, affix data, and config are sent to the client via `AIO.AddOnInit()`. The client creates WoW frames for the UI. Server-client communication uses `AIO.Msg():Add():Send()` pattern. The `dungeon_challenge_pending` DB table is still used for Lua→C++ challenge handoff.
@@ -278,7 +278,7 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 
 1. **DBC Spells**: Affix spells 900050-900054 must be created manually in Stoneharry spell editor
 2. **Boss Detection**: Currently via `creature_template.rank >= 3` → some bosses have rank < 3
-3. **Timer UI**: Currently only chat messages → could be extended to AIO-based timer display frame
+3. **Timer UI**: Active run tracker frame implemented via AIO (TrackerFrame). Shows timer, boss progress, deaths, affixes, +2/+3 thresholds. Toggle with `/dc tracker`
 4. **Prepared Statements**: Currently format-string-based queries → should use prepared statements
 5. **Creature Scaling**: `GetCreatureBySpawnIdStore()` must be verified against correct API
 6. **Instance Reset**: No automatic instance reset after run completion

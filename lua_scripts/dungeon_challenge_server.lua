@@ -45,6 +45,23 @@ local AFFIXES = {
 }
 
 -- ============================================================================
+-- Active Run UI Tracking State
+-- ============================================================================
+
+local trackedRuns = {}  -- playerGuidLow -> shared run tracking table
+
+local function BuildAffixString(difficulty)
+    local names = {}
+    for _, a in ipairs(AFFIXES) do
+        if difficulty >= a.minDiff then
+            table.insert(names, a.name)
+        end
+    end
+    if #names == 0 then return "None" end
+    return table.concat(names, ", ")
+end
+
+-- ============================================================================
 -- Runtime Data
 -- ============================================================================
 
@@ -294,6 +311,31 @@ ServerHandlers.StartChallenge = function(player, mapId, difficulty)
             dungeon.entranceX, dungeon.entranceY,
             dungeon.entranceZ, dungeon.entranceO)
     end
+
+    -- Track run for active UI
+    local runTrack = {
+        mapId = mapId,
+        difficulty = difficulty,
+        dungeonName = dungeon.name,
+        timerSeconds = dungeon.timerMinutes * 60,
+        totalBosses = dungeon.bossCount,
+        bossesKilled = 0,
+        deathCount = 0,
+        penaltyTime = 0,
+        startTime = nil,
+        state = "pending",
+        bossKills = {},
+        killedBossGuids = {},
+        affixString = BuildAffixString(difficulty),
+    }
+
+    if group then
+        for _, member in ipairs(group:GetMembers()) do
+            trackedRuns[member:GetGUIDLow()] = runTrack
+        end
+    else
+        trackedRuns[guid] = runTrack
+    end
 end
 
 AIO.AddHandlers("DungeonChallenge", ServerHandlers)
@@ -308,5 +350,113 @@ local function OnGossipHello(event, player, object)
 end
 
 RegisterGameObjectGossipEvent(GO_ENTRY, 1, OnGossipHello)
+
+-- ============================================================================
+-- Active Run UI: Eluna Event Hooks
+-- ============================================================================
+
+-- Detect dungeon entry: start run timer + send RunStart to client
+RegisterPlayerEvent(28, function(event, player)  -- PLAYER_EVENT_ON_MAP_CHANGE
+    local guid = player:GetGUIDLow()
+    local run = trackedRuns[guid]
+    if not run then return end
+
+    local newMapId = player:GetMapId()
+
+    if newMapId == run.mapId then
+        if run.state == "pending" then
+            -- First player to enter starts the run timer
+            run.state = "running"
+            run.startTime = os.time()
+        end
+        if run.state == "running" then
+            -- Send RunStart to this player (works for first and subsequent members)
+            AIO.Handle(player, "DungeonChallenge", "RunStart",
+                run.dungeonName, run.difficulty, run.timerSeconds,
+                run.totalBosses, run.affixString)
+        end
+    elseif run.state == "running" and newMapId ~= run.mapId then
+        -- Player left the dungeon
+        AIO.Handle(player, "DungeonChallenge", "RunEnd")
+        trackedRuns[guid] = nil
+    end
+end)
+
+-- Detect boss kills: update tracker for all participants
+RegisterPlayerEvent(7, function(event, player, creature)  -- PLAYER_EVENT_ON_KILL_CREATURE
+    local guid = player:GetGUIDLow()
+    local run = trackedRuns[guid]
+    if not run or run.state ~= "running" then return end
+    if creature:GetRank() < 3 then return end
+
+    -- Prevent double-counting (hook fires per player in group)
+    local cGuid = creature:GetGUIDLow()
+    if run.killedBossGuids[cGuid] then return end
+    run.killedBossGuids[cGuid] = true
+
+    run.bossesKilled = run.bossesKilled + 1
+    local elapsed = os.time() - run.startTime
+    local bossName = creature:GetName()
+    table.insert(run.bossKills, { name = bossName, time = elapsed })
+
+    -- Notify all participants
+    local group = player:GetGroup()
+    if group then
+        for _, member in ipairs(group:GetMembers()) do
+            AIO.Handle(member, "DungeonChallenge", "BossKilled",
+                bossName, run.bossesKilled, elapsed)
+        end
+    else
+        AIO.Handle(player, "DungeonChallenge", "BossKilled",
+            bossName, run.bossesKilled, elapsed)
+    end
+
+    -- Check completion
+    if run.bossesKilled >= run.totalBosses then
+        run.state = "completed"
+        local effectiveElapsed = elapsed + run.penaltyTime
+        local inTime = effectiveElapsed <= run.timerSeconds
+
+        local function notifyComplete(p)
+            AIO.Handle(p, "DungeonChallenge", "RunCompleted",
+                effectiveElapsed, inTime)
+            trackedRuns[p:GetGUIDLow()] = nil
+        end
+
+        if group then
+            for _, member in ipairs(group:GetMembers()) do
+                notifyComplete(member)
+            end
+        else
+            notifyComplete(player)
+        end
+    end
+end)
+
+-- Detect player deaths: update tracker for all participants
+RegisterPlayerEvent(8, function(event, player, killer)  -- PLAYER_EVENT_ON_KILLED_BY_CREATURE
+    local guid = player:GetGUIDLow()
+    local run = trackedRuns[guid]
+    if not run or run.state ~= "running" then return end
+
+    run.deathCount = run.deathCount + 1
+    run.penaltyTime = run.penaltyTime + CONFIG.DEATH_PENALTY_SECONDS
+
+    local group = player:GetGroup()
+    if group then
+        for _, member in ipairs(group:GetMembers()) do
+            AIO.Handle(member, "DungeonChallenge", "DeathUpdate",
+                run.deathCount, run.penaltyTime)
+        end
+    else
+        AIO.Handle(player, "DungeonChallenge", "DeathUpdate",
+            run.deathCount, run.penaltyTime)
+    end
+end)
+
+-- Cleanup on logout
+RegisterPlayerEvent(4, function(event, player)  -- PLAYER_EVENT_ON_LOGOUT
+    trackedRuns[player:GetGUIDLow()] = nil
+end)
 
 print("[mod-dungeon-challenge] AIO Server: Script loaded (GO Entry: " .. GO_ENTRY .. ")")
