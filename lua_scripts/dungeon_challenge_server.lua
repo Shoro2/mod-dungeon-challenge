@@ -272,12 +272,7 @@ ServerHandlers.StartChallenge = function(player, mapId, difficulty)
         return
     end
 
-    -- Force heroic difficulty for challenge runs
-    if group then
-        group:SetDungeonDifficulty(1) -- DUNGEON_DIFFICULTY_HEROIC = 1
-    else
-        player:SetDungeonDifficulty(1)
-    end
+    -- Note: Heroic difficulty is set by C++ OnPlayerMapChanged hook
 
     -- Store pending challenge in DB (read by C++ OnPlayerMapChanged)
     local guid = player:GetGUIDLow()
