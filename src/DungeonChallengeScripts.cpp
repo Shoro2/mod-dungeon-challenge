@@ -247,6 +247,17 @@ private:
 };
 
 // ============================================================================
+// Helper: Boss detection (rank >= 3, world boss, or dungeon boss via flags_extra)
+// ============================================================================
+
+static bool IsChallengeBoss(Creature const* creature)
+{
+    return creature->GetCreatureTemplate()->rank >= 3
+        || creature->isWorldBoss()
+        || creature->IsDungeonBoss();
+}
+
+// ============================================================================
 // AllCreatureScript - Creature Processing & Affix Behavior
 // ============================================================================
 
@@ -281,9 +292,8 @@ public:
             && !creatureData->combatTracked
             && creatureData->affixes.empty())
         {
-            // Skip bosses
-            bool isBoss = creature->GetCreatureTemplate()->rank >= 3 || creature->isWorldBoss();
-            if (!isBoss)
+            // Skip bosses (rank >= 3, world boss, or dungeon boss via flags_extra)
+            if (!IsChallengeBoss(creature))
             {
                 creatureData->combatTracked = true;
                 creature->GetHomePosition(creatureData->homeX, creatureData->homeY,
@@ -448,8 +458,8 @@ public:
         if (run->state != CHALLENGE_STATE_RUNNING)
             return;
 
-        // Check if this was a boss (rank >= 3)
-        if (creature->GetCreatureTemplate()->rank >= 3 || creature->isWorldBoss())
+        // Check if this was a boss (rank >= 3, world boss, or dungeon boss)
+        if (IsChallengeBoss(creature))
         {
             run->bossesKilled++;
             bool isFinalBoss = run->AllBossesKilled();
