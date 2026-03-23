@@ -469,7 +469,7 @@ public:
         {
             Unit* victim = creature->GetVictim();
             if (!victim)
-                victim = creature->GetThreatMgr().getHostileTarget();
+                victim = creature->GetThreatMgr().GetCurrentVictim();
             if (victim)
             {
                 creatureData->hasCalled = true;
