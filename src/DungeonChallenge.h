@@ -256,7 +256,7 @@ public:
     // Getters
     bool IsEnabled() const { return _enabled; }
     uint32 GetMaxDifficulty() const { return _maxDifficulty; }
-    uint32 GetNpcEntry() const { return _npcEntry; }
+
     float GetHealthMultiplier(uint32 difficulty) const;
     float GetDamageMultiplier(uint32 difficulty) const;
     uint32 GetTimerForDungeon(uint32 mapId) const;
@@ -320,7 +320,7 @@ private:
     float _damageMultPerLevel;
     uint32 _timerBaseMinutes;
     uint32 _lootBonusPerLevel;
-    uint32 _npcEntry;
+
     bool _announceOnLogin;
     uint32 _deathPenaltySeconds;
     uint32 _gameObjectEntry;

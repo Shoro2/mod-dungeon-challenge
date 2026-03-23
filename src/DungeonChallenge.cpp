@@ -24,7 +24,7 @@ DungeonChallengeMgr::DungeonChallengeMgr()
     , _damageMultPerLevel(0.08f)
     , _timerBaseMinutes(30)
     , _lootBonusPerLevel(50000)
-    , _npcEntry(500000)
+
     , _announceOnLogin(true)
     , _deathPenaltySeconds(15)
     , _gameObjectEntry(CHALLENGE_GO_ENTRY)
@@ -46,7 +46,7 @@ void DungeonChallengeMgr::LoadConfig(bool /*reload*/)
     _damageMultPerLevel = sConfigMgr->GetOption<float>("DungeonChallenge.DamageMultiplierPerLevel", 8.0f) / 100.0f;
     _timerBaseMinutes = sConfigMgr->GetOption<uint32>("DungeonChallenge.TimerBaseMinutes", 30);
     _lootBonusPerLevel = sConfigMgr->GetOption<uint32>("DungeonChallenge.LootBonusPerLevel", 50000);
-    _npcEntry = sConfigMgr->GetOption<uint32>("DungeonChallenge.NpcEntry", 500000);
+
     _announceOnLogin = sConfigMgr->GetOption<bool>("DungeonChallenge.AnnounceOnLogin", true);
     _deathPenaltySeconds = sConfigMgr->GetOption<uint32>("DungeonChallenge.DeathPenaltySeconds", 15);
     _gameObjectEntry = sConfigMgr->GetOption<uint32>("DungeonChallenge.GameObjectEntry", CHALLENGE_GO_ENTRY);
