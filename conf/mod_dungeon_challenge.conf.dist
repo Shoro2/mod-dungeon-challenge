@@ -59,6 +59,24 @@
 #       Example: Level 50 in time = 10 * 50 * 2 = 1000 Paragon XP
 #       Default: 10
 #
+#   DungeonChallenge.SummarySeconds
+#       Seconds the run-end summary stays open before the player is auto-teleported
+#       to their hearthstone/home. A "Leave" button on the summary exits earlier.
+#       NOTE: mirror this value in the Lua CONFIG.SUMMARY_SECONDS.
+#       Default: 30
+#
+#   DungeonChallenge.DeathEndsRunMode
+#       When a player death ends the run: 0 = only on a WIPE (all participants
+#       dead; solo death always ends), 1 = on ANY single death.
+#       NOTE: mirror this value in the Lua CONFIG.DEATH_ENDS_RUN.
+#       Default: 0
+#
+#   DungeonChallenge.FallbackSeconds
+#       Safety net (seconds): if the client addon/Lua is unavailable, the server
+#       teleports any still-present player home and resets the run after this long.
+#       Should be greater than SummarySeconds.
+#       Default: 40
+#
 
 DungeonChallenge.Enable = 1
 DungeonChallenge.AffixPercentage = 15
@@ -72,3 +90,7 @@ DungeonChallenge.AnnounceOnLogin = 1
 DungeonChallenge.DeathPenaltySeconds = 15
 DungeonChallenge.GameObjectEntry = 500002
 DungeonChallenge.ParagonXPPerLevel = 10
+
+DungeonChallenge.SummarySeconds = 30
+DungeonChallenge.DeathEndsRunMode = 0
+DungeonChallenge.FallbackSeconds = 40

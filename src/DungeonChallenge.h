@@ -132,7 +132,8 @@ enum ChallengeState : uint8
     CHALLENGE_STATE_RUNNING     = 3,  // timer ticking, dungeon in progress
     CHALLENGE_STATE_COMPLETED   = 4,  // all bosses killed, timer stopped
     CHALLENGE_STATE_FAILED      = 5,  // all players dead or left
-    CHALLENGE_STATE_ABANDONED   = 6   // manually abandoned
+    CHALLENGE_STATE_ABANDONED   = 6,  // manually abandoned
+    CHALLENGE_STATE_SUMMARY     = 7   // run ended (clear or death); summary shown, repop blocked, awaiting exit
 };
 
 struct ChallengeRun
@@ -155,6 +156,8 @@ struct ChallengeRun
     std::unordered_map<ObjectGuid, std::vector<DungeonChallengeAffix>> creatureAffixes;
     std::unordered_map<ObjectGuid, WorldLocation> participantOrigins;  // pre-teleport positions
     uint32 completionDelayMs = 0;          // countdown for post-completion teleport (ms)
+    uint32 summaryElapsedMs = 0;           // ms elapsed in SUMMARY state (drives the C++ safety-fallback teleport)
+    bool   endedByDeath     = false;       // true if the run ended by death/wipe (vs. a clear)
 
     bool IsTimedOut() const
     {
@@ -262,6 +265,9 @@ public:
     uint32 GetTimerForDungeon(uint32 mapId) const;
     uint32 GetDeathPenalty() const { return _deathPenaltySeconds; }
     uint32 GetGameObjectEntry() const { return _gameObjectEntry; }
+    uint32 GetSummarySeconds() const { return _summarySeconds; }       // visible auto-leave countdown (s)
+    uint32 GetDeathEndsRunMode() const { return _deathEndsRunMode; }   // 0 = wipe, 1 = any death
+    uint32 GetFallbackSeconds() const { return _fallbackSeconds; }     // C++ safety teleport threshold (s)
 
     // Dungeon Info
     DungeonInfo const* GetDungeonInfo(uint32 mapId) const;
@@ -285,6 +291,8 @@ public:
     void UpdateRun(ChallengeRun* run, uint32 diff);
     void CompleteRun(ChallengeRun* run);
     void FailRun(ChallengeRun* run);
+    void EndRunByDeath(ChallengeRun* run);                          // run ended by death/wipe -> SUMMARY state
+    void WriteRunEndSignal(ChallengeRun const* run, bool clear);    // C++ -> Lua run-end signal (DB row per participant)
 
     // Affix Assignment
     void AssignAffixesToCreatures(ChallengeRun* run, Map* map);
@@ -325,6 +333,9 @@ private:
     uint32 _deathPenaltySeconds;
     uint32 _gameObjectEntry;
     uint32 _paragonXPPerLevel;
+    uint32 _summarySeconds;     // visible auto-leave countdown (default 30)
+    uint32 _deathEndsRunMode;   // 0 = end on WIPE, 1 = end on ANY death (default 0)
+    uint32 _fallbackSeconds;    // C++ safety teleport threshold, should be > _summarySeconds (default 40)
 
     // Data
     std::vector<DungeonInfo> _dungeons;

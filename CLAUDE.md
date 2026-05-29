@@ -87,6 +87,8 @@ mod-dungeon-challenge/
 
 6. **Snapshot-Based Records**: Each boss kill generates a detailed snapshot record per participant in the `dungeon_challenge_snapshot` table.
 
+7. **Run-End Summary**: When a run ends (dungeon clear, or a death/wipe — see `ShouldEndRunOnDeath`), C++ enters `CHALLENGE_STATE_SUMMARY`, blocks the graveyard repop (`OnPlayerCanRepopAtGraveyard`), and writes a `dungeon_challenge_runend` row per participant. The client detects end-of-run (`UnitIsDeadOrGhost` / all bosses killed — this also catches environmental/affix deaths the Lua server's `ON_KILLED_BY_CREATURE` hook misses) and pulls the result via `RequestRunEnd`; the Lua server renders the AIO summary (boss splits + personal/global-best deltas) and, on the countdown reaching 0 or the **Leave** button (`RequestLeave`), teleports the player home + unbinds. A C++ `OnMapUpdate` fallback (`FallbackSeconds`) is the safety net.
+
 ### Data Flow
 
 ```
@@ -121,15 +123,19 @@ Dungeon running:
     ├─ OnAllCreatureUpdate() → ProcessCreature() via DataMap + Call for Help + Immolation tick
     ├─ ModifyMeleeDamage/ModifySpellDamageTaken → Damage via extraDamageMultiplier
     ├─ OnPlayerCreatureKill() → Boss kill + snapshot + affix on-death + non-mythic lock
-    ├─ OnPlayerJustDied() → Death counter + penalty (solo or group notification)
-    └─ OnMapUpdate() → Timer display with penalty
+    ├─ OnPlayerJustDied() → Death counter + penalty; on wipe → EndRunByDeath() (SUMMARY)
+    └─ OnMapUpdate() → Timer display with penalty; SUMMARY-state fallback teleport
     ↓
-AllBossesKilled()
-    ├─ CompleteRun()
-    ├─ SaveBossKillSnapshot() (final boss record)
-    ├─ SaveRunToLeaderboard() + SaveHistory()
-    ├─ DistributeRewards() (gold)
-    └─ OnDestroyInstance() → Cleanup
+Run ends (AllBossesKilled clear OR death/wipe)
+    ├─ CompleteRun() / EndRunByDeath() → state = CHALLENGE_STATE_SUMMARY
+    ├─ (clear) SaveBossKillSnapshot + SaveRunToLeaderboard + SaveHistory + DistributeRewards
+    ├─ OnPlayerCanRepopAtGraveyard() → false (dead player stays in place)
+    ├─ WriteRunEndSignal() → dungeon_challenge_runend (one row per participant)
+    ↓
+Client detects end-of-run → AIO RequestRunEnd → Lua ShowRunSummary (splits + best deltas)
+    ├─ Summary countdown 0 OR "Leave" → AIO RequestLeave → Teleport home + UnbindAllInstances
+    ├─ FailRunIfPlayerLeft()/HandleParticipantExit() → resurrect + RemoveChallengeRun when empty
+    └─ OnDestroyInstance() → Cleanup (instance unloads / resets)
 ```
 
 ## Configuration
@@ -148,6 +154,9 @@ AllBossesKilled()
 | `DungeonChallenge.DeathPenaltySeconds` | 15 | Time penalty per death (seconds) |
 | `DungeonChallenge.GameObjectEntry` | 500002 | GameObject entry for the Dungeon Challenge Stone |
 | `DungeonChallenge.ParagonXPPerLevel` | 10 | Paragon XP per difficulty level (doubled if in time) |
+| `DungeonChallenge.SummarySeconds` | 30 | Run-end summary / auto-leave countdown (seconds). Mirror in Lua `CONFIG.SUMMARY_SECONDS` |
+| `DungeonChallenge.DeathEndsRunMode` | 0 | 0 = wipe ends run, 1 = any death. Mirror in Lua `CONFIG.DEATH_ENDS_RUN` |
+| `DungeonChallenge.FallbackSeconds` | 40 | Server safety teleport-home/reset if the client add-on is absent (must be > SummarySeconds) |
 
 ## Scaling Formulas
 
@@ -251,7 +260,8 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 | `dungeon_challenge_history` | All runs of a player |
 | `dungeon_challenge_best` | Aggregated best scores |
 | `dungeon_challenge_snapshot` | Boss kill records (per boss, per participant) |
-| `dungeon_challenge_pending` | Temporary: Lua→C++ challenge data transfer |
+| `dungeon_challenge_pending` | Temporary: Lua→C++ challenge start handoff |
+| `dungeon_challenge_runend` | Temporary: C++→Lua run-end signal (outcome, times, deaths, home coords) for the summary |
 
 ## IDs and Ranges
 
@@ -281,7 +291,7 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 3. **Timer UI**: Active run tracker frame implemented via AIO (TrackerFrame). Shows timer, boss progress, deaths, affixes, +2/+3 thresholds. Toggle with `/dc tracker`
 4. **Prepared Statements**: Currently format-string-based queries → should use prepared statements
 5. **Creature Scaling**: `GetCreatureBySpawnIdStore()` must be verified against correct API
-6. **Instance Reset**: No automatic instance reset after run completion
+6. **Instance Reset**: On run end the participants are returned to their home bind and unbound (`UnbindAllInstances`), so the emptied instance unloads and the next run is fresh. A C++ safety fallback (`FallbackSeconds`) also returns/reset stragglers if the client add-on is missing.
 7. **Snapshot Reload**: Snapshots are loaded at startup but not periodically refreshed
 8. **Lua CONFIG sync**: Config values are sent to client via AIO.AddOnInit on login (server-side config is authoritative)
 9. **AIO Dependency**: Requires AIO framework (AIO.lua + dependencies) in server `lua_scripts/` folder

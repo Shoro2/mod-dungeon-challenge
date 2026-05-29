@@ -124,9 +124,28 @@ The Challenge NPC has entry ID **500000**. Spawn it in a capital city:
 
 - **Timer**: Remaining time is periodically displayed in chat
 - **Boss Kills**: Progress is shown after each boss kill
-- **Deaths**: Each death adds a time penalty and is announced
-- **Affixes**: ~5% of mobs have special abilities (marked in chat)
+- **Deaths**: Each death adds a time penalty and is announced. A **wipe**
+  (all participants dead at once; solo = any death) **ends the run**
+  (configurable to "any death" via `DeathEndsRunMode`).
+- **Affixes**: ~15% of mobs have special abilities (marked in chat)
 - **Cancel**: The run can be abandoned via the NPC or by the group leader
+
+### When a Run Ends
+
+When a run ends — by **dungeon clear** or by **death/wipe** — a **Run Summary**
+panel opens on screen instead of teleporting the player out immediately:
+
+- **Boss split times** for every boss defeated, plus the **total time** and
+  **deaths**.
+- The **difference to your personal best** and the **global best** for that
+  dungeon and difficulty (green = faster, red = slower, "new best!" on a record).
+- A countdown: after `SummarySeconds` (default **30s**) you are teleported to
+  your **hearthstone/home** and the instance is reset for a fresh re-run.
+- A **"Leave Now"** button to exit early.
+
+A dead player is kept in place during the summary (no instant graveyard
+release). If the client add-on is unavailable, the server still returns the
+player home and resets after `FallbackSeconds` (default 40s).
 
 ### Leaderboard
 
@@ -148,6 +167,9 @@ Via the NPC:
 | `DungeonChallenge.NpcEntry` | 500000 | Creature entry ID of the NPC |
 | `DungeonChallenge.AnnounceOnLogin` | 1 | Welcome message on login |
 | `DungeonChallenge.DeathPenaltySeconds` | 15 | Time penalty per death in seconds |
+| `DungeonChallenge.SummarySeconds` | 30 | Run-summary auto-leave countdown in seconds |
+| `DungeonChallenge.DeathEndsRunMode` | 0 | 0 = wipe ends run, 1 = any death ends run |
+| `DungeonChallenge.FallbackSeconds` | 40 | Server safety teleport-home/reset (no add-on) |
 | `DungeonChallenge.KeystoneEnabled` | 1 | Enable keystone item system |
 | `DungeonChallenge.KeystoneBuyCooldownMinutes` | 1440 | Keystone purchase cooldown (minutes) |
 
