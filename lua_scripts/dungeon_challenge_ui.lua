@@ -1196,6 +1196,126 @@ local function StartAutoHide(delay)
 end
 
 -- ============================================================================
+-- Run Summary Frame (shown when a run ends: dungeon clear OR death)
+-- ============================================================================
+
+local summaryShown = false        -- guards the end-of-run pull while a summary is up
+local summaryCountdown = nil       -- seconds left before auto-leave (client-driven)
+local summaryLeaveSent = false
+
+local SUMMARY_W = 340
+local SUM_PAD = 16
+
+local SummaryFrame = CreateFrame("Frame", "DCSummaryFrame", UIParent)
+SummaryFrame:SetWidth(SUMMARY_W)
+SummaryFrame:SetHeight(300)
+SummaryFrame:SetPoint("CENTER", 0, 80)
+SummaryFrame:SetMovable(true)
+SummaryFrame:EnableMouse(true)
+SummaryFrame:RegisterForDrag("LeftButton")
+SummaryFrame:SetScript("OnDragStart", SummaryFrame.StartMoving)
+SummaryFrame:SetScript("OnDragStop", SummaryFrame.StopMovingOrSizing)
+SummaryFrame:SetBackdrop({
+    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+    tile = true, tileSize = 16, edgeSize = 16,
+    insets = { left = 4, right = 4, top = 4, bottom = 4 }
+})
+SummaryFrame:SetBackdropColor(0.05, 0.05, 0.1, 0.95)
+SummaryFrame:SetBackdropBorderColor(0.4, 0.4, 0.8, 0.8)
+SummaryFrame:SetFrameStrata("DIALOG")
+SummaryFrame:Hide()
+table.insert(UISpecialFrames, "DCSummaryFrame")
+
+local sumHeader = SummaryFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+sumHeader:SetPoint("TOP", 0, -12)
+sumHeader:SetWidth(SUMMARY_W - 24)
+sumHeader:SetJustifyH("CENTER")
+
+local sumSub = SummaryFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+sumSub:SetPoint("TOP", sumHeader, "BOTTOM", 0, -4)
+sumSub:SetWidth(SUMMARY_W - 24)
+sumSub:SetJustifyH("CENTER")
+
+local sumBosses = SummaryFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+sumBosses:SetPoint("TOPLEFT", SUM_PAD, -56)
+sumBosses:SetWidth(SUMMARY_W - 2 * SUM_PAD)
+sumBosses:SetJustifyH("LEFT")
+
+local sumStats = SummaryFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+sumStats:SetPoint("TOPLEFT", sumBosses, "BOTTOMLEFT", 0, -8)
+sumStats:SetWidth(SUMMARY_W - 2 * SUM_PAD)
+sumStats:SetJustifyH("LEFT")
+
+local sumCountdown = SummaryFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+sumCountdown:SetPoint("BOTTOM", 0, 44)
+sumCountdown:SetWidth(SUMMARY_W - 24)
+sumCountdown:SetJustifyH("CENTER")
+
+local sumLeave = CreateFrame("Button", nil, SummaryFrame, "UIPanelButtonTemplate")
+sumLeave:SetSize(160, 26)
+sumLeave:SetPoint("BOTTOM", 0, 12)
+sumLeave:SetText("Leave Now")
+sumLeave:SetScript("OnClick", function()
+    if not summaryLeaveSent then
+        summaryLeaveSent = true
+        AIO.Msg():Add("DungeonChallenge", "RequestLeave"):Send()
+    end
+    summaryCountdown = nil
+    SummaryFrame:Hide()
+end)
+
+-- Format a "delta vs best" line: green if faster, red if slower, grey if no record.
+local function FmtDelta(label, best, cur)
+    if not best or best <= 0 then
+        return string.format("%s: |cffaaaaaa(no record)|r", label)
+    end
+    local d = cur - best
+    if d < 0 then
+        return string.format("%s: |cff00ff00-%s (new best!)|r", label, FmtTime(-d))
+    elseif d == 0 then
+        return string.format("%s: |cffffff00even|r", label)
+    else
+        return string.format("%s: |cffff0000+%s|r", label, FmtTime(d))
+    end
+end
+
+-- Client-driven countdown: when it reaches 0, auto-trigger the leave.
+SummaryFrame:SetScript("OnUpdate", function(self, elapsed)
+    if summaryCountdown == nil then return end
+    summaryCountdown = summaryCountdown - elapsed
+    if summaryCountdown <= 0 then
+        summaryCountdown = nil
+        sumCountdown:SetText("|cffaaaaaaLeaving...|r")
+        if not summaryLeaveSent then
+            summaryLeaveSent = true
+            AIO.Msg():Add("DungeonChallenge", "RequestLeave"):Send()
+        end
+    else
+        sumCountdown:SetText(string.format(
+            "|cffaaaaaaLeaving in |r|cffffd700%d|r|cffaaaaaas (or click below)|r",
+            math.ceil(summaryCountdown)))
+    end
+end)
+
+-- Watcher: while a run is active and not yet summarised, detect end-of-run on the
+-- client (death or final boss) and pull the authoritative result from the server.
+-- This covers deaths the Lua server cannot see (environmental/affix kills).
+local watcherAccum = 0
+local WatcherFrame = CreateFrame("Frame", "DCWatcherFrame", UIParent)
+WatcherFrame:SetScript("OnUpdate", function(self, elapsed)
+    if summaryShown or not activeRunData then return end
+    watcherAccum = watcherAccum + elapsed
+    if watcherAccum < 1.5 then return end
+    watcherAccum = 0
+    local ended = UnitIsDeadOrGhost("player")
+        or (activeRunData.totalBosses and activeRunData.bossesKilled >= activeRunData.totalBosses)
+    if ended then
+        AIO.Msg():Add("DungeonChallenge", "RequestRunEnd"):Send()
+    end
+end)
+
+-- ============================================================================
 -- AIO Client Handlers (called from server)
 -- ============================================================================
 
@@ -1321,6 +1441,10 @@ DC_ClientHandlers.RunStart = function(player, dungeonName, difficulty, timerSeco
         inTime = false,
     }
     autoHideTimer = nil
+    summaryShown = false
+    summaryCountdown = nil
+    summaryLeaveSent = false
+    SummaryFrame:Hide()
     TrackerFrame:Show()
     DEFAULT_CHAT_FRAME:AddMessage(string.format(
         "|cff00ff00[Dungeon Challenge]|r Tracker active: |cffff8000%s|r +%d",
@@ -1366,10 +1490,84 @@ DC_ClientHandlers.RunCompleted = function(player, totalElapsed, inTime)
     StartAutoHide(60)
 end
 
+-- Run-end summary (dungeon clear OR death) — pulled via RequestRunEnd.
+DC_ClientHandlers.ShowRunSummary = function(player, outcome, dungeonName, difficulty,
+        effTime, inTime, deaths, bossKills, personalBest, globalBest, countdown)
+    summaryShown = true        -- stop the watcher from polling again
+    bossKills = bossKills or {}
+    effTime = effTime or 0
+    deaths = deaths or 0
+
+    -- The summary replaces the live tracker.
+    autoHideTimer = nil
+    TrackerFrame:Hide()
+
+    local cleared = (outcome == 1)
+    if cleared then
+        sumHeader:SetText("|cff00ff00DUNGEON CLEARED!|r")
+    else
+        sumHeader:SetText("|cffff0000RUN ENDED|r")
+    end
+    sumSub:SetText(string.format("%s+%d|r |cffffffff%s|r",
+        DifficultyColorHex(difficulty or 1), difficulty or 1, dungeonName or "Dungeon"))
+
+    -- Boss split times
+    local lines = {}
+    for i, bk in ipairs(bossKills) do
+        table.insert(lines, string.format("|cff00ff00- %s|r  |cffaaaaaa%s|r",
+            bk.name or ("Boss " .. i), FmtTime(bk.time or 0)))
+    end
+    if #lines == 0 then
+        lines = { "|cff666666- No bosses defeated|r" }
+    end
+    sumBosses:SetText(table.concat(lines, "\n"))
+
+    -- Totals, deaths, and the best-time deltas
+    local stats = {}
+    local totalColor = inTime and "|cff00ff00" or "|cffff0000"
+    table.insert(stats, string.format("Total time: %s%s|r", totalColor, FmtTime(effTime)))
+    if deaths > 0 then
+        table.insert(stats, string.format("Deaths: |cffff0000%d|r", deaths))
+    else
+        table.insert(stats, "Deaths: |cff00ff000|r")
+    end
+    table.insert(stats, " ")
+    if cleared then
+        -- Show the signed delta vs the player's personal and the global best.
+        table.insert(stats, FmtDelta("Personal best", personalBest, effTime))
+        table.insert(stats, FmtDelta("Global best", globalBest, effTime))
+    else
+        -- A wipe has no comparable completion time: show the bests for reference.
+        local function BestRef(label, best)
+            if best and best > 0 then
+                return string.format("%s: |cffffffff%s|r", label, FmtTime(best))
+            end
+            return string.format("%s: |cffaaaaaa(no record)|r", label)
+        end
+        table.insert(stats, BestRef("Personal best", personalBest))
+        table.insert(stats, BestRef("Global best", globalBest))
+    end
+    sumStats:SetText(table.concat(stats, "\n"))
+
+    -- Size the frame to its content
+    local bodyLines = math.max(1, #lines) + #stats
+    SummaryFrame:SetHeight(56 + bodyLines * 14 + 78)
+
+    -- Start the client-driven countdown (drives the auto-leave at 0)
+    summaryLeaveSent = false
+    summaryCountdown = countdown or 30
+
+    SummaryFrame:Show()
+end
+
 -- Run ended (player left dungeon or run was abandoned)
 DC_ClientHandlers.RunEnd = function(player)
     activeRunData = nil
+    summaryShown = false
+    summaryCountdown = nil
+    summaryLeaveSent = false
     TrackerFrame:Hide()
+    SummaryFrame:Hide()
 end
 
 -- Only register once — avoids AIO "already registered" assert on addon reload

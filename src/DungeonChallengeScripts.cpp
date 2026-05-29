@@ -30,8 +30,49 @@ public:
         // Clean up stale pending challenges from previous sessions
         CharacterDatabase.DirectExecute(
             "DELETE FROM dungeon_challenge_pending WHERE created_at < DATE_SUB(NOW(), INTERVAL 5 MINUTE)");
+
+        // Clean up stale run-end signals from previous sessions
+        CharacterDatabase.DirectExecute(
+            "DELETE FROM dungeon_challenge_runend WHERE created_at < DATE_SUB(NOW(), INTERVAL 5 MINUTE)");
     }
 };
+
+// ============================================================================
+// Helpers shared by the player/map scripts (run-end handling)
+// ============================================================================
+
+// === DEATH TRIGGER (default WIPE; swap to ANY by returning true) ===
+// Decides whether a player's death should end the whole run.
+static bool ShouldEndRunOnDeath(ChallengeRun* run, Player* deadPlayer, Map* map)
+{
+    if (sDungeonChallengeMgr->GetDeathEndsRunMode() == 1)
+        return true; // ALTERNATIVE: any single death ends the run
+
+    // WIPE: end only if no other participant is still alive inside this instance.
+    for (auto const& guid : run->participants)
+    {
+        if (guid == deadPlayer->GetGUID())
+            continue;
+        Player* p = ObjectAccessor::FindPlayer(guid);
+        if (p && p->IsAlive() && p->GetMap() == map && p->GetInstanceId() == run->instanceId)
+            return false;
+    }
+    return true;
+}
+
+// Resurrect (if dead) and teleport a participant to their hearthstone/home bind.
+static void SendParticipantHome(Player* p)
+{
+    if (!p)
+        return;
+    if (!p->IsAlive())
+    {
+        p->ResurrectPlayer(0.5f);
+        p->SpawnCorpseBones();
+    }
+    p->TeleportTo(p->m_homebindMapId, p->m_homebindX, p->m_homebindY,
+        p->m_homebindZ, p->GetOrientation());
+}
 
 // ============================================================================
 // PlayerScript - Player Events
@@ -275,13 +316,69 @@ public:
         {
             notifyDeath(player);
         }
+
+        // End the run on a wipe (default) or on any death (configurable). The
+        // player is NOT teleported out yet — the summary opens first (see Lua),
+        // and the repop block below keeps the dead player in place meanwhile.
+        if (ShouldEndRunOnDeath(run, player, map))
+            sDungeonChallengeMgr->EndRunByDeath(run);
+    }
+
+    // Keep a dead player in place during the run-end summary window instead of
+    // sending them to a graveyard ("not instantly teleported out"). The core
+    // checks this before any graveyard repop (Player::RepopAtGraveyard).
+    bool OnPlayerCanRepopAtGraveyard(Player* player) override
+    {
+        if (!sDungeonChallengeMgr->IsEnabled())
+            return true;
+
+        // Cheap early-out: only relevant while the dead player is still in the
+        // challenge instance (this hook fires on every repop server-wide).
+        Map* map = player->GetMap();
+        if (!map || !map->IsDungeon())
+            return true;
+
+        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(player->GetInstanceId());
+        if (run && (run->state == CHALLENGE_STATE_SUMMARY
+                 || run->state == CHALLENGE_STATE_COMPLETED
+                 || run->state == CHALLENGE_STATE_FAILED))
+            return false;
+        return true;
     }
 
 private:
+    // True if any participant is still inside the challenge instance.
+    bool AnyParticipantInInstance(ChallengeRun* run)
+    {
+        for (auto const& guid : run->participants)
+        {
+            Player* p = ObjectAccessor::FindPlayer(guid);
+            if (p && p->GetMap() && p->GetMap()->IsDungeon()
+                && p->GetInstanceId() == run->instanceId)
+                return true;
+        }
+        return false;
+    }
+
+    // A participant left the instance during the summary window (Lua teleported
+    // them home via the 30s timer or the Leave button, already unbinding them).
+    // Revive them if they died, and drop the run once the instance is empty.
+    void HandleParticipantExit(Player* player, ChallengeRun* run)
+    {
+        if (!player->IsAlive())
+        {
+            player->ResurrectPlayer(0.5f);
+            player->SpawnCorpseBones();
+        }
+
+        if (!AnyParticipantInInstance(run))
+            sDungeonChallengeMgr->RemoveChallengeRun(run->instanceId);
+    }
+
     void FailRunIfPlayerLeft(Player* player)
     {
         ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRunByParticipant(player->GetGUID());
-        if (!run || run->state != CHALLENGE_STATE_RUNNING)
+        if (!run)
             return;
 
         // If the player is still in the challenge dungeon instance, do nothing
@@ -289,23 +386,39 @@ private:
         if (map && map->IsDungeon() && map->GetInstanceId() == run->instanceId)
             return;
 
-        // Player left the dungeon — fail the run
+        // Player left while the run was being summarised (Leave button / auto-teleport)
+        if (run->state == CHALLENGE_STATE_SUMMARY)
+        {
+            HandleParticipantExit(player, run);
+            return;
+        }
+
+        if (run->state != CHALLENGE_STATE_RUNNING)
+            return;
+
+        // Player abandoned the run mid-way — end it and send everyone home
         sDungeonChallengeMgr->FailRun(run);
 
         DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
         std::string dungeonName = info ? info->name : "Unknown";
 
-        // Notify all remaining participants
         for (auto const& guid : run->participants)
         {
-            if (Player* p = ObjectAccessor::FindPlayer(guid))
-            {
-                ChatHandler(p->GetSession()).PSendSysMessage(
-                    "|cffff0000[Dungeon Challenge]|r |cff69ccf0{}|r left the dungeon! "
-                    "Challenge |cffff8000{}|r Level |cffff8000{}|r has been ended.",
-                    player->GetName(), dungeonName, run->difficulty);
-            }
+            Player* p = ObjectAccessor::FindPlayer(guid);
+            if (!p)
+                continue;
+
+            ChatHandler(p->GetSession()).PSendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r |cff69ccf0{}|r left the dungeon! "
+                "Challenge |cffff8000{}|r Level |cffff8000{}|r has been ended.",
+                player->GetName(), dungeonName, run->difficulty);
+
+            // Teleport the remaining participants (still inside) back home
+            if (p->GetMap() && p->GetMap()->IsDungeon() && p->GetInstanceId() == run->instanceId)
+                SendParticipantHome(p);
         }
+
+        sDungeonChallengeMgr->RemoveChallengeRun(run->instanceId);
     }
 };
 
@@ -853,20 +966,25 @@ public:
             return;
         }
 
-        // Handle post-completion teleport (10 second delay)
-        if (run->state == CHALLENGE_STATE_COMPLETED || run->state == CHALLENGE_STATE_FAILED)
+        // Run ended (clear or death): summary window. Lua drives the visible
+        // 30s countdown + teleport-home + Leave button. This is the C++ safety
+        // net for when the client addon/Lua is unavailable, plus final cleanup.
+        if (run->state == CHALLENGE_STATE_SUMMARY
+            || run->state == CHALLENGE_STATE_COMPLETED
+            || run->state == CHALLENGE_STATE_FAILED)
         {
-            run->completionDelayMs += diff;
-            if (run->completionDelayMs >= 10000)
+            run->summaryElapsedMs += diff;
+            if (run->summaryElapsedMs >= sDungeonChallengeMgr->GetFallbackSeconds() * 1000)
             {
-                // Teleport all participants back to their origin positions
-                for (auto const& [guid, origin] : run->participantOrigins)
+                // Teleport any participant still inside back to their home bind.
+                for (auto const& guid : run->participants)
                 {
-                    if (Player* p = ObjectAccessor::FindPlayer(guid))
+                    Player* p = ObjectAccessor::FindPlayer(guid);
+                    if (p && p->GetInstanceId() == map->GetInstanceId())
                     {
-                        p->TeleportTo(origin);
+                        SendParticipantHome(p);
                         ChatHandler(p->GetSession()).PSendSysMessage(
-                            "|cff00ff00[Dungeon Challenge]|r You have been teleported back.");
+                            "|cff00ff00[Dungeon Challenge]|r You have been returned home.");
                     }
                 }
                 sDungeonChallengeMgr->RemoveChallengeRun(map->GetInstanceId());

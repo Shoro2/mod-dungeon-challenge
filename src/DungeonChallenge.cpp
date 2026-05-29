@@ -29,6 +29,9 @@ DungeonChallengeMgr::DungeonChallengeMgr()
     , _deathPenaltySeconds(15)
     , _gameObjectEntry(CHALLENGE_GO_ENTRY)
     , _paragonXPPerLevel(10)
+    , _summarySeconds(30)
+    , _deathEndsRunMode(0)
+    , _fallbackSeconds(40)
     , _rng(std::random_device{}())
 {
 }
@@ -51,6 +54,9 @@ void DungeonChallengeMgr::LoadConfig(bool /*reload*/)
     _deathPenaltySeconds = sConfigMgr->GetOption<uint32>("DungeonChallenge.DeathPenaltySeconds", 15);
     _gameObjectEntry = sConfigMgr->GetOption<uint32>("DungeonChallenge.GameObjectEntry", CHALLENGE_GO_ENTRY);
     _paragonXPPerLevel = sConfigMgr->GetOption<uint32>("DungeonChallenge.ParagonXPPerLevel", 10);
+    _summarySeconds = sConfigMgr->GetOption<uint32>("DungeonChallenge.SummarySeconds", 30);
+    _deathEndsRunMode = sConfigMgr->GetOption<uint32>("DungeonChallenge.DeathEndsRunMode", 0);
+    _fallbackSeconds = sConfigMgr->GetOption<uint32>("DungeonChallenge.FallbackSeconds", 40);
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Configuration loaded (Enabled: {}, MaxDifficulty: {}, AffixPct: {}%, ParagonXP/Level: {})",
         _enabled ? "Yes" : "No", _maxDifficulty, _affixPercentage, _paragonXPPerLevel);
@@ -416,11 +422,19 @@ void DungeonChallengeMgr::CompleteRun(ChallengeRun* run)
     run->state = CHALLENGE_STATE_COMPLETED;
     run->elapsedTime = GameTime::GetGameTime().count() - run->startTime;
 
+    // Persist leaderboard/history/rewards while still in COMPLETED state (their guards require it).
     SaveRunToLeaderboard(run);
     DistributeRewards(run);
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Run completed! Instance: {}, Time: {}s, Deaths: {}, Penalty: {}s",
         run->instanceId, run->elapsedTime, run->deathCount, run->penaltyTime);
+
+    // Enter the summary window: the on-screen recap is shown and the player is
+    // teleported out after a delay (or via the Leave button) — see OnMapUpdate.
+    run->endedByDeath = false;
+    run->summaryElapsedMs = 0;
+    run->state = CHALLENGE_STATE_SUMMARY;
+    WriteRunEndSignal(run, true);
 }
 
 void DungeonChallengeMgr::FailRun(ChallengeRun* run)
@@ -430,6 +444,62 @@ void DungeonChallengeMgr::FailRun(ChallengeRun* run)
 
     run->state = CHALLENGE_STATE_FAILED;
     LOG_INFO("module", ">> mod-dungeon-challenge: Run failed for instance {}.", run->instanceId);
+}
+
+void DungeonChallengeMgr::EndRunByDeath(ChallengeRun* run)
+{
+    if (!run || run->state != CHALLENGE_STATE_RUNNING)
+        return;
+
+    run->elapsedTime = GameTime::GetGameTime().count() - run->startTime;
+    run->endedByDeath = true;
+    run->summaryElapsedMs = 0;
+    run->state = CHALLENGE_STATE_SUMMARY;
+
+    // Record an incomplete run in each participant's history (completion_time = 0 => failed).
+    for (auto const& guid : run->participants)
+    {
+        CharacterDatabase.Execute(
+            "INSERT INTO `dungeon_challenge_history` "
+            "(`player_guid`, `map_id`, `difficulty`, `completion_time`, `death_count`, `in_time`) "
+            "VALUES ({}, {}, {}, 0, {}, 0)",
+            guid.GetCounter(), run->mapId, run->difficulty, run->deathCount);
+    }
+
+    WriteRunEndSignal(run, false);
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Run ended by death (instance {}, time: {}s, deaths: {}).",
+        run->instanceId, run->elapsedTime, run->deathCount);
+}
+
+void DungeonChallengeMgr::WriteRunEndSignal(ChallengeRun const* run, bool clear)
+{
+    if (!run)
+        return;
+
+    uint32 totalTime = run->elapsedTime;
+    uint32 effectiveTime = run->GetEffectiveElapsed();
+    uint32 inTime = (clear && !run->IsTimedOut()) ? 1 : 0;
+    uint32 outcome = clear ? 1 : 0;
+
+    // One row per participant. The client pulls this via the Lua RequestRunEnd handler
+    // to render the summary, and uses the home coordinates to teleport the player out.
+    for (auto const& guid : run->participants)
+    {
+        Player* p = ObjectAccessor::FindPlayer(guid);
+        if (!p)
+            continue;
+
+        CharacterDatabase.Execute(
+            "REPLACE INTO `dungeon_challenge_runend` "
+            "(`player_guid`, `instance_id`, `map_id`, `difficulty`, `outcome`, "
+            "`total_time`, `effective_time`, `in_time`, `deaths`, "
+            "`home_map`, `home_x`, `home_y`, `home_z`) "
+            "VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+            guid.GetCounter(), run->instanceId, run->mapId, run->difficulty, outcome,
+            totalTime, effectiveTime, inTime, run->deathCount,
+            p->m_homebindMapId, p->m_homebindX, p->m_homebindY, p->m_homebindZ);
+    }
 }
 
 // ============================================================================

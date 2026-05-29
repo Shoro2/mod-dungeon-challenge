@@ -99,3 +99,29 @@ CREATE TABLE `dungeon_challenge_snapshot` (
     INDEX `idx_player` (`player_guid`),
     INDEX `idx_final_boss` (`map_id`, `is_final_boss`, `snap_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- Run End Signal (communication between C++ scripts and Lua summary UI)
+-- C++ writes one row per participant when a run ends (clear or death); the Lua
+-- RequestRunEnd handler reads + deletes it to render the on-screen summary and
+-- to teleport the player to the home coordinates carried here.
+-- ============================================================================
+
+DROP TABLE IF EXISTS `dungeon_challenge_runend`;
+CREATE TABLE `dungeon_challenge_runend` (
+    `player_guid` INT UNSIGNED NOT NULL,
+    `instance_id` INT UNSIGNED NOT NULL DEFAULT 0,
+    `map_id` INT UNSIGNED NOT NULL,
+    `difficulty` INT UNSIGNED NOT NULL,
+    `outcome` TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '0 = death/wipe, 1 = clear',
+    `total_time` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'elapsed seconds at run end (no penalty)',
+    `effective_time` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'elapsed + death penalty seconds',
+    `in_time` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    `deaths` INT UNSIGNED NOT NULL DEFAULT 0,
+    `home_map` INT UNSIGNED NOT NULL DEFAULT 0,
+    `home_x` FLOAT NOT NULL DEFAULT 0,
+    `home_y` FLOAT NOT NULL DEFAULT 0,
+    `home_z` FLOAT NOT NULL DEFAULT 0,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`player_guid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

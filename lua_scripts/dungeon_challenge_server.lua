@@ -24,6 +24,9 @@ local CONFIG = {
     DMG_MULT_PER_LEVEL      = 0.08,
     DEATH_PENALTY_SECONDS   = 15,
     AFFIX_PERCENTAGE        = 10,
+    -- Must match the worldserver.conf values (DungeonChallenge.SummarySeconds / .DeathEndsRunMode)
+    SUMMARY_SECONDS         = 30,   -- run-end summary / auto-leave countdown
+    DEATH_ENDS_RUN          = 0,    -- 0 = wipe ends run, 1 = any death (C++ is authoritative; this is informational)
 }
 
 -- ============================================================================
@@ -328,15 +331,123 @@ ServerHandlers.StartChallenge = function(player, mapId, difficulty)
         bossKills = {},
         killedBossGuids = {},
         affixString = BuildAffixString(difficulty),
+        personalBest = {},   -- [guidLow] = pre-run personal best seconds (or nil)
+        globalBest = nil,    -- pre-run global best seconds (or nil)
+        exitDest = {},       -- [guidLow] = { map, x, y, z } home destination from the C++ signal
+        exited = {},         -- [guidLow] = true once the player has been teleported out
     }
+
+    -- Capture pre-run bests so the summary delta is not polluted by the run we are
+    -- about to insert into the leaderboard. Global once; personal per member.
+    local gbq = CharDBQuery(string.format(
+        "SELECT MIN(completion_time) FROM dungeon_challenge_leaderboard "
+        .. "WHERE map_id = %d AND difficulty = %d", mapId, difficulty))
+    if gbq then
+        local gv = gbq:GetUInt32(0)
+        if gv and gv > 0 then runTrack.globalBest = gv end
+    end
+
+    local function capturePersonalBest(p)
+        local pq = CharDBQuery(string.format(
+            "SELECT MIN(completion_time) FROM dungeon_challenge_history "
+            .. "WHERE player_guid = %d AND map_id = %d AND difficulty = %d AND completion_time > 0",
+            p:GetGUIDLow(), mapId, difficulty))
+        if pq then
+            local pv = pq:GetUInt32(0)
+            if pv and pv > 0 then runTrack.personalBest[p:GetGUIDLow()] = pv end
+        end
+    end
 
     if group then
         for _, member in ipairs(group:GetMembers()) do
             trackedRuns[member:GetGUIDLow()] = runTrack
+            capturePersonalBest(member)
         end
     else
         trackedRuns[guid] = runTrack
+        capturePersonalBest(player)
     end
+end
+
+-- ============================================================================
+-- Run-End Summary (pulled by the client when it detects death / dungeon clear)
+-- ============================================================================
+
+local function DungeonNameByMap(mapId)
+    for _, d in ipairs(dungeons) do
+        if d.mapId == mapId then return d.name end
+    end
+    return "Dungeon"
+end
+
+-- Read the C++ run-end signal for one player and, if present, render the summary.
+-- Safe to call repeatedly: the signal row is deleted on first success.
+local function TryShowSummaryFor(p)
+    if not p then return end
+    local g = p:GetGUIDLow()
+    local run = trackedRuns[g]
+    if run and run.exited[g] then return end  -- already leaving
+
+    local q = CharDBQuery(string.format(
+        "SELECT outcome, total_time, effective_time, in_time, deaths, map_id, difficulty, "
+        .. "home_map, home_x, home_y, home_z "
+        .. "FROM dungeon_challenge_runend WHERE player_guid = %d", g))
+    if not q then return end  -- run has not ended yet; the client keeps polling
+
+    local outcome    = q:GetUInt8(0)
+    local effTime    = q:GetUInt32(2)
+    local inTime     = q:GetUInt8(3) == 1
+    local deaths     = q:GetUInt32(4)
+    local mapId      = q:GetUInt32(5)
+    local difficulty = q:GetUInt32(6)
+    local homeMap    = q:GetUInt32(7)
+    local homeX      = q:GetFloat(8)
+    local homeY      = q:GetFloat(9)
+    local homeZ      = q:GetFloat(10)
+
+    -- Consume the signal so the summary is only sent once.
+    CharDBExecute(string.format(
+        "DELETE FROM dungeon_challenge_runend WHERE player_guid = %d", g))
+
+    local dungeonName  = (run and run.dungeonName) or DungeonNameByMap(mapId)
+    local bossKills    = (run and run.bossKills) or {}
+    local personalBest = (run and run.personalBest[g]) or 0  -- 0 = no record (avoids nil mid-args)
+    local globalBest   = (run and run.globalBest) or 0
+
+    -- Store the home destination so RequestLeave can teleport the player out.
+    if run then
+        run.exitDest[g] = { map = homeMap, x = homeX, y = homeY, z = homeZ }
+    end
+
+    AIO.Handle(p, "DungeonChallenge", "ShowRunSummary",
+        outcome, dungeonName, difficulty, effTime, inTime, deaths,
+        bossKills, personalBest, globalBest, CONFIG.SUMMARY_SECONDS)
+end
+
+-- Client polls this while the local player is dead or after the last boss.
+-- The first request also fans out to group members so everyone sees the summary
+-- even if their own client did not trigger it (e.g. the "any death" mode).
+ServerHandlers.RequestRunEnd = function(player)
+    local group = player:GetGroup()
+    if group then
+        for _, member in ipairs(group:GetMembers()) do
+            TryShowSummaryFor(member)
+        end
+    else
+        TryShowSummaryFor(player)
+    end
+end
+
+-- "Leave" button on the summary, and the client's auto-leave when the countdown
+-- reaches 0: teleport the player to their hearthstone/home and reset their bind.
+ServerHandlers.RequestLeave = function(player)
+    local g = player:GetGUIDLow()
+    local run = trackedRuns[g]
+    if not run or not run.exitDest[g] or run.exited[g] then return end
+    run.exited[g] = true
+    local d = run.exitDest[g]
+    player:Teleport(d.map, d.x, d.y, d.z, 0)
+    player:UnbindAllInstances()
 end
 
 AIO.AddHandlers("DungeonChallenge", ServerHandlers)
@@ -429,10 +540,12 @@ RegisterPlayerEvent(7, function(event, player, creature)  -- PLAYER_EVENT_ON_KIL
         local effectiveElapsed = elapsed + run.penaltyTime
         local inTime = effectiveElapsed <= run.timerSeconds
 
+        -- Keep trackedRuns alive: the run-end summary (pulled by the client via
+        -- RequestRunEnd) needs bossKills/bests/exitDest. It is cleared when the
+        -- player is teleported out (map-change handler) or on logout.
         local function notifyComplete(p)
             AIO.Handle(p, "DungeonChallenge", "RunCompleted",
                 effectiveElapsed, inTime)
-            trackedRuns[p:GetGUIDLow()] = nil
         end
 
         if group then
