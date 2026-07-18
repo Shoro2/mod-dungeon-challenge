@@ -66,7 +66,7 @@ void DungeonChallengeMgr::LoadDungeonData()
 {
     _dungeons.clear();
 
-    QueryResult result = WorldDatabase.Query("SELECT map_id, name, entrance_x, entrance_y, entrance_z, entrance_o, timer_minutes, boss_count FROM dungeon_challenge_dungeons");
+    QueryResult result = WorldDatabase.Query("SELECT map_id, name, entrance_x, entrance_y, entrance_z, entrance_o, timer_minutes, boss_count FROM dungeon_challenge_dungeons WHERE enabled = 1");
     if (!result)
     {
         LOG_WARN("module", ">> mod-dungeon-challenge: No dungeon data found in dungeon_challenge_dungeons table. Using defaults.");

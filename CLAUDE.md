@@ -256,7 +256,7 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 
 | Table | Purpose |
 |-------|---------|
-| `dungeon_challenge_dungeons` | Dungeon definitions (MapID, entrance, timer, bosses). Entrance coords mirror the `areatrigger_teleport` entrance rows — the same source the RDF teleport uses (`LFGMgr::LoadLFGDungeons` → `GetMapEntranceTrigger`). The seed SQL uses no `DROP TABLE` so an updater re-apply keeps later-added rows (e.g. FL dungeons) |
+| `dungeon_challenge_dungeons` | Dungeon definitions (MapID, entrance, timer, bosses). Entrance coords mirror the `areatrigger_teleport` entrance rows — the same source the RDF teleport uses (`LFGMgr::LoadLFGDungeons` → `GetMapEntranceTrigger`). The seed SQL uses no `DROP TABLE` so an updater re-apply keeps later-added rows (e.g. FL dungeons). Both loaders (C++ and Lua) only read rows with `enabled = 1` — new dungeons can be staged disabled |
 | `dungeon_challenge_spell_override` | Per-spell damage tuning (spellId, mapId, modPct, dotModPct) |
 | `creature_template` (Entry 500000) | Challenge NPC (fallback) |
 | `gameobject_template` (Entry 500002) | Dungeon Challenge Stone (primary interaction) |

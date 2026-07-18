@@ -78,7 +78,8 @@ local function LoadDungeons()
     dungeons = {}
     local query = WorldDBQuery(
         "SELECT map_id, name, entrance_x, entrance_y, entrance_z, entrance_o, "
-        .. "timer_minutes, boss_count FROM dungeon_challenge_dungeons ORDER BY map_id")
+        .. "timer_minutes, boss_count FROM dungeon_challenge_dungeons "
+        .. "WHERE enabled = 1 ORDER BY map_id")
     if query then
         repeat
             table.insert(dungeons, {
