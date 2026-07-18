@@ -117,6 +117,13 @@ public:
         if (player->GetMapId() == mapid || !sDungeonChallengeMgr->IsDungeonCapable(mapid))
             return true;
 
+        // Raid-type maps (e.g. FL Conclave/Hoto/Nak'talim) use RAID difficulty
+        // for instance creation — the dungeon-difficulty switch is meaningless
+        // there; they run on their raid-normal spawn set.
+        MapEntry const* targetMap = sMapStore.LookupEntry(mapid);
+        if (!targetMap || targetMap->IsRaid())
+            return true;
+
         if (!GetMapDifficultyData(mapid, DUNGEON_DIFFICULTY_HEROIC))
             return true;
 
@@ -220,10 +227,12 @@ public:
 
         // Check if dungeon is heroic — challenges require heroic mode. Maps
         // without a heroic MapDifficulty entry (custom FL dungeons) run their
-        // single difficulty and are exempt. Normally unreachable: the
-        // OnPlayerBeforeTeleport hook already raised the difficulty, so this
-        // only remains as a safety net.
-        if (map->GetDifficulty() == DUNGEON_DIFFICULTY_NORMAL
+        // single difficulty and are exempt, raid-type maps run their raid
+        // difficulty (a dungeon-difficulty bounce would loop forever there).
+        // Normally unreachable: the OnPlayerBeforeTeleport hook already
+        // raised the difficulty, so this only remains as a safety net.
+        if (!map->IsRaid()
+            && map->GetDifficulty() == DUNGEON_DIFFICULTY_NORMAL
             && GetMapDifficultyData(map->GetId(), DUNGEON_DIFFICULTY_HEROIC))
         {
             // Set heroic difficulty so the next entry will be heroic. For

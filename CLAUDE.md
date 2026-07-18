@@ -118,8 +118,12 @@ C++: OnPlayerBeforeTeleport() (PlayerScript hook, inside Player::TeleportTo)
     ├─ Sets HEROIC before the instance is created: Group::SetDungeonDifficulty
     │  for groups (the GROUP difficulty decides the new instance), player
     │  difficulty for solo
-    └─ Maps without a heroic MapDifficulty entry (custom FL dungeons) are
-       exempt and run their single difficulty
+    ├─ Maps without a heroic MapDifficulty entry (e.g. FL Akleia) are exempt
+    │  and run their single difficulty
+    └─ Raid-type maps (FL Conclave/Hoto/Nak'talim) are exempt too — instance
+       creation uses RAID difficulty there, so they run their raid-normal set
+       (a dungeon-difficulty bounce would loop forever; the safety net skips
+       raids as well)
     ↓
 C++: OnPlayerMapChanged() (PlayerScript hook)
     ├─ Check in-memory pending (NPC fallback) OR DB pending (Lua path)
@@ -281,6 +285,7 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 | Gossip Actions | 1000-5999 | Menu navigation (Lua + C++) |
 | Spells | 900050-900060 | Affix DBC spells (all affixes have a DBC aura) |
 | Maps | 574-668 | WotLK 5-man dungeons |
+| Maps | 738-748 | FL custom dungeons (standalone maps). Heroic-capable: 739/740/744/745/746/748 (twin-spawn masks; on 744/748 bosses exist ONLY in the heroic set). Single-difficulty: 747. Raid-type: 738/743 (disabled, phase 3) + 742 Conclave (playable — bosses on raid-normal). Boss ranks curated via `ForgottenLand2.0/output/sql/31_fl_dungeon_challenge_bossranks.sql` |
 
 ## Code Conventions
 

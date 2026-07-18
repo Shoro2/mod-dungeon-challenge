@@ -71,6 +71,32 @@ INSERT INTO `dungeon_challenge_dungeons` (`map_id`, `name`, `entrance_x`, `entra
 (668, 'Halls of Reflection',          5239.01,  1932.64,  707.695,  0.800565, 25, 2);  -- AT 5636
 
 -- ============================================================================
+-- Forgotten Land custom dungeons (standalone maps 738-748)
+-- ============================================================================
+-- Entrances mirror the FL entrance areatriggers 8002-8010 (738 Nak'talim has
+-- no entrance trigger — game_tele `flnaktalim`). Boss counts = curated rank-3
+-- bosses visible per difficulty (see 31_fl_dungeon_challenge_bossranks.sql in
+-- ForgottenLand2.0/output/sql). Heroic-capable dungeon maps (739/740/744/745/
+-- 746/748) enter heroic via the auto-heroic hook — on 744/748 the bosses ONLY
+-- exist in the heroic spawn set. 747 Akleia is single-difficulty. Disabled:
+-- 738 Nak'talim + 743 Hoto (raid-type, phase 3 — Hoto's real bosses sit in
+-- the mask-2 set that raid-normal never shows, plus 30 rank-3 "Big shark"
+-- trash would feed the boss counter); 742 Conclave is raid-type but its
+-- bosses spawn on raid-normal, so it is playable.
+DELETE FROM `dungeon_challenge_dungeons` WHERE `map_id` IN (738, 739, 740, 742, 743, 744, 745, 746, 747, 748);
+INSERT INTO `dungeon_challenge_dungeons` (`map_id`, `name`, `entrance_x`, `entrance_y`, `entrance_z`, `entrance_o`, `timer_minutes`, `boss_count`, `enabled`) VALUES
+(738, 'FL: Nak''talim (Raid)',        16336,    15478,    295,      0,        60, 5, 0),  -- game_tele flnaktalim
+(739, 'FL: Xala',                     -351.96,  -799.3,   0.65,     0.007858, 45, 2, 1),  -- AT 8004
+(740, 'FL: Ak''Tazia',                -1639.62, 6738.93,  114.22,   0.91,     30, 4, 1),  -- AT 8003
+(742, 'FL: Conclave',                 -79.53,   -964.61,  41.14,    1.85,     20, 2, 1),  -- AT 8008
+(743, 'FL: Hoto (Raid)',              1954.41,  1589.72,  80.83,    1.16,     30, 3, 0),  -- AT 8010
+(744, 'FL: Genetic',                  2404.58,  767.17,   0,        4.74,     30, 4, 1),  -- AT 8005
+(745, 'FL: Murloc City',              1331.53,  849.33,   41.41,    6.2,      35, 3, 1),  -- AT 8007
+(746, 'FL: Trondam',                  178.77,   77.64,    143.7,    3.72,     35, 2, 1),  -- AT 8006
+(747, 'FL: Akleia',                   3446.02,  -3037.95, 175.23,   0.104,    20, 1, 1),  -- AT 8002
+(748, 'FL: Yelma',                    1565,     586.67,   98.22,    1.185,    25, 2, 1);  -- AT 8009
+
+-- ============================================================================
 -- Spell Override Table (per-spell damage tuning)
 -- ============================================================================
 
