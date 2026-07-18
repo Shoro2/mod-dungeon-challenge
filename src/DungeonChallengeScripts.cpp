@@ -103,29 +103,36 @@ public:
         FailRunIfPlayerLeft(player);
     }
 
-    // Raise the dungeon difficulty to heroic BEFORE the challenge teleport
-    // resolves, so the very first entry already creates a heroic instance.
-    // The Lua UI cannot set difficulties — it writes the pending row
-    // (synchronously) and teleports; this hook picks the row up. Maps
-    // without a heroic MapDifficulty entry (custom FL dungeons) keep their
-    // single difficulty and are exempt.
+    // Set the challenge difficulty BEFORE the teleport resolves, so the very
+    // first entry already creates the right instance. The Lua UI cannot set
+    // difficulties — it writes the pending row (synchronously) and teleports;
+    // this hook picks the row up. Dungeon maps are raised to heroic (maps
+    // without a heroic MapDifficulty entry keep their single difficulty);
+    // raid-type maps (FL Conclave/Hoto/Nak'talim) are forced to the raid
+    // size configured in dungeon_challenge_dungeons.raid_difficulty — e.g.
+    // Hoto's real content only exists in the 25-player spawn set. Entering
+    // a raid map without a raid group requires Instance.IgnoreRaid = 1.
     bool OnPlayerBeforeTeleport(Player* player, uint32 mapid, float /*x*/, float /*y*/,
         float /*z*/, float /*orientation*/, uint32 /*options*/, Unit* /*target*/) override
     {
         if (!sDungeonChallengeMgr->IsEnabled())
             return true;
 
-        if (player->GetMapId() == mapid || !sDungeonChallengeMgr->IsDungeonCapable(mapid))
+        if (player->GetMapId() == mapid)
             return true;
 
-        // Raid-type maps (e.g. FL Conclave/Hoto/Nak'talim) use RAID difficulty
-        // for instance creation — the dungeon-difficulty switch is meaningless
-        // there; they run on their raid-normal spawn set.
+        DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(mapid);
+        if (!info)
+            return true;
+
         MapEntry const* targetMap = sMapStore.LookupEntry(mapid);
-        if (!targetMap || targetMap->IsRaid())
+        if (!targetMap)
             return true;
 
-        if (!GetMapDifficultyData(mapid, DUNGEON_DIFFICULTY_HEROIC))
+        bool const isRaidMap = targetMap->IsRaid();
+
+        // Single-difficulty dungeon maps have nothing to switch
+        if (!isRaidMap && !GetMapDifficultyData(mapid, DUNGEON_DIFFICULTY_HEROIC))
             return true;
 
         // Only act on an actual pending challenge for this destination map
@@ -144,7 +151,21 @@ public:
 
         // Group difficulty decides the new instance for grouped players, the
         // player's own difficulty for solo runs.
-        if (Group* group = player->GetGroup())
+        if (isRaidMap)
+        {
+            Difficulty raidDiff = Difficulty(info->raidDifficulty);
+            if (Group* group = player->GetGroup())
+            {
+                if (group->GetRaidDifficulty() != raidDiff)
+                    group->SetRaidDifficulty(raidDiff);
+            }
+            else if (player->GetRaidDifficulty() != raidDiff)
+            {
+                player->SetRaidDifficulty(raidDiff);
+                player->SendRaidDifficulty(false);
+            }
+        }
+        else if (Group* group = player->GetGroup())
         {
             if (group->GetDungeonDifficulty() != DUNGEON_DIFFICULTY_HEROIC)
                 group->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);

@@ -66,7 +66,7 @@ void DungeonChallengeMgr::LoadDungeonData()
 {
     _dungeons.clear();
 
-    QueryResult result = WorldDatabase.Query("SELECT map_id, name, entrance_x, entrance_y, entrance_z, entrance_o, timer_minutes, boss_count FROM dungeon_challenge_dungeons WHERE enabled = 1");
+    QueryResult result = WorldDatabase.Query("SELECT map_id, name, entrance_x, entrance_y, entrance_z, entrance_o, timer_minutes, boss_count, raid_difficulty FROM dungeon_challenge_dungeons WHERE enabled = 1");
     if (!result)
     {
         LOG_WARN("module", ">> mod-dungeon-challenge: No dungeon data found in dungeon_challenge_dungeons table. Using defaults.");
@@ -109,6 +109,9 @@ void DungeonChallengeMgr::LoadDungeonData()
         info.entranceO     = fields[5].Get<float>();
         info.timerMinutes  = fields[6].Get<uint32>();
         info.totalCreatures = fields[7].Get<uint32>();
+        info.raidDifficulty = fields[8].Get<uint8>();
+        if (info.raidDifficulty > RAID_DIFFICULTY_25MAN_HEROIC)
+            info.raidDifficulty = RAID_DIFFICULTY_10MAN_NORMAL;
         _dungeons.push_back(info);
     } while (result->NextRow());
 

@@ -83,6 +83,7 @@ struct DungeonInfo
     float entranceX, entranceY, entranceZ, entranceO;
     uint32 timerMinutes;       // override for base timer
     uint32 totalCreatures;     // approximate creature count (cached)
+    uint32 raidDifficulty = 0; // raid-type maps only: forced raid size (0 = 10n, 1 = 25n)
 };
 
 // ============================================================================

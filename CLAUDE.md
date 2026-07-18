@@ -286,7 +286,7 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 | Gossip Actions | 1000-5999 | Menu navigation (Lua + C++) |
 | Spells | 900050-900060 | Affix DBC spells (all affixes have a DBC aura) |
 | Maps | 574-668 | WotLK 5-man dungeons |
-| Maps | 738-748 | FL custom dungeons (standalone maps). Heroic-capable: 739/740/744/745/746/748 (twin-spawn masks; on 744/748 bosses exist ONLY in the heroic set). Single-difficulty: 747. Raid-type: 738/743 (disabled, phase 3) + 742 Conclave (playable — bosses on raid-normal). Boss ranks curated via `ForgottenLand2.0/output/sql/31_fl_dungeon_challenge_bossranks.sql`. 740 Ak'Tazia = 2 encounters: the Malachar trio is grouped via `dungeon_challenge_boss_group` (operator-confirmed one encounter) |
+| Maps | 738-748 | FL custom dungeons (standalone maps). Heroic-capable: 739/740/744/745/746/748 (twin-spawn masks; on 744/748 bosses exist ONLY in the heroic set). Single-difficulty: 747. Raid-type maps run at the forced `raid_difficulty`: 742 Conclave 10-player, 743 Hoto 25-player (its 10-player set is a broken low-level stub; "Big shark" demoted to trash via `32_fl_hoto_challenge_prep.sql`) — requires `Instance.IgnoreRaid = 1` (set 2026-07-18). 738 Nak'talim disabled (planned quest-chain unlock). Boss ranks curated via `ForgottenLand2.0/output/sql/31_fl_dungeon_challenge_bossranks.sql`. 740 Ak'Tazia = 2 encounters: the Malachar trio is grouped via `dungeon_challenge_boss_group` (operator-confirmed one encounter). 748 Yelma: the 38× entry 200145 "??????" blockers (HealthModifier 2300) are INTENTIONAL anti-skip walls — do not "fix" them |
 
 ## Code Conventions
 
