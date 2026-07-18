@@ -114,6 +114,29 @@ INSERT INTO `dungeon_challenge_dungeons` (`map_id`, `name`, `entrance_x`, `entra
 (748, 'FL: Yelma',                    1565,     586.67,   98.22,    1.185,    25, 2, 0, 1);  -- AT 8009
 
 -- ============================================================================
+-- FL boss rank curation (canonical here; originally applied live via
+-- ForgottenLand2.0/output/sql/31_fl_dungeon_challenge_bossranks.sql + 32)
+-- ============================================================================
+-- The challenge counts `rank` >= 3 kills as bosses. Promote the curated FL
+-- site bosses (both normal/heroic twin entries, matching the FL author's own
+-- pattern — Razen/Xameth/Azakian were already rank 3); demote the 30 "Big
+-- shark" (9000000) spawns on Hoto to elite trash so they stop feeding the
+-- boss counter. Idempotent; on installs without FL content these match 0 rows.
+UPDATE `creature_template` SET `rank` = 3 WHERE `entry` IN
+(81158, 9000006,
+ 84223, 80223, 80260, 80261, 80262, 84260, 84261, 84262,
+ 200163, 80183,
+ 80132, 80131, 80129,
+ 80210, 80209, 200183, 80205,
+ 81112, 80112, 81113, 80113, 81114, 80114,
+ 81202, 80060,
+ 81332,
+ 80139, 80136)
+AND `rank` <> 3;
+
+UPDATE `creature_template` SET `rank` = 1 WHERE `entry` = 9000000 AND `rank` <> 1;
+
+-- ============================================================================
 -- Boss Group Table (multi-mob encounters counted as ONE boss)
 -- ============================================================================
 -- All members of a `group_id` form one encounter: the boss counter increments
