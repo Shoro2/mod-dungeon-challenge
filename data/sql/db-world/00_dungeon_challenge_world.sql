@@ -87,7 +87,7 @@ DELETE FROM `dungeon_challenge_dungeons` WHERE `map_id` IN (738, 739, 740, 742, 
 INSERT INTO `dungeon_challenge_dungeons` (`map_id`, `name`, `entrance_x`, `entrance_y`, `entrance_z`, `entrance_o`, `timer_minutes`, `boss_count`, `enabled`) VALUES
 (738, 'FL: Nak''talim (Raid)',        16336,    15478,    295,      0,        60, 5, 0),  -- game_tele flnaktalim
 (739, 'FL: Xala',                     -351.96,  -799.3,   0.65,     0.007858, 45, 2, 1),  -- AT 8004
-(740, 'FL: Ak''Tazia',                -1639.62, 6738.93,  114.22,   0.91,     30, 4, 1),  -- AT 8003
+(740, 'FL: Ak''Tazia',                -1639.62, 6738.93,  114.22,   0.91,     30, 2, 1),  -- AT 8003 (Malachar trio = 1 grouped encounter + Ak'Tazia)
 (742, 'FL: Conclave',                 -79.53,   -964.61,  41.14,    1.85,     20, 2, 1),  -- AT 8008
 (743, 'FL: Hoto (Raid)',              1954.41,  1589.72,  80.83,    1.16,     30, 3, 0),  -- AT 8010
 (744, 'FL: Genetic',                  2404.58,  767.17,   0,        4.74,     30, 4, 1),  -- AT 8005
@@ -95,6 +95,30 @@ INSERT INTO `dungeon_challenge_dungeons` (`map_id`, `name`, `entrance_x`, `entra
 (746, 'FL: Trondam',                  178.77,   77.64,    143.7,    3.72,     35, 2, 1),  -- AT 8006
 (747, 'FL: Akleia',                   3446.02,  -3037.95, 175.23,   0.104,    20, 1, 1),  -- AT 8002
 (748, 'FL: Yelma',                    1565,     586.67,   98.22,    1.185,    25, 2, 1);  -- AT 8009
+
+-- ============================================================================
+-- Boss Group Table (multi-mob encounters counted as ONE boss)
+-- ============================================================================
+-- All members of a `group_id` form one encounter: the boss counter increments
+-- only when the LAST living member dies (C++ OnPlayerCreatureKill; the Lua
+-- tracker ticks the group on its first member kill). Seeded with the Malachar
+-- trio in FL Ak'Tazia (normal twins 80260-80262 / heroic twins 84260-84262 —
+-- per difficulty only one set spawns).
+CREATE TABLE IF NOT EXISTS `dungeon_challenge_boss_group` (
+    `creature_entry` INT UNSIGNED NOT NULL,
+    `map_id` INT UNSIGNED NOT NULL,
+    `group_id` INT UNSIGNED NOT NULL,
+    PRIMARY KEY (`creature_entry`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DELETE FROM `dungeon_challenge_boss_group` WHERE `creature_entry` IN (80260, 80261, 80262, 84260, 84261, 84262);
+INSERT INTO `dungeon_challenge_boss_group` (`creature_entry`, `map_id`, `group_id`) VALUES
+(80260, 740, 1),
+(80261, 740, 1),
+(80262, 740, 1),
+(84260, 740, 1),
+(84261, 740, 1),
+(84262, 740, 1);
 
 -- ============================================================================
 -- Spell Override Table (per-spell damage tuning)

@@ -136,6 +136,32 @@ void DungeonChallengeMgr::LoadAffixData()
     LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} affixes.", _affixes.size());
 }
 
+void DungeonChallengeMgr::LoadBossGroups()
+{
+    _bossGroupByEntry.clear();
+
+    QueryResult result = WorldDatabase.Query("SELECT creature_entry, group_id FROM dungeon_challenge_boss_group");
+    if (!result)
+    {
+        LOG_INFO("module", ">> mod-dungeon-challenge: No boss groups defined.");
+        return;
+    }
+
+    do
+    {
+        Field* fields = result->Fetch();
+        _bossGroupByEntry[fields[0].Get<uint32>()] = fields[1].Get<uint32>();
+    } while (result->NextRow());
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} boss group members.", _bossGroupByEntry.size());
+}
+
+uint32 DungeonChallengeMgr::GetBossGroupId(uint32 creatureEntry) const
+{
+    auto it = _bossGroupByEntry.find(creatureEntry);
+    return it != _bossGroupByEntry.end() ? it->second : 0;
+}
+
 void DungeonChallengeMgr::LoadLeaderboard()
 {
     _leaderboard.clear();

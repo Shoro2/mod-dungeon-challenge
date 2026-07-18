@@ -69,6 +69,7 @@ end
 -- ============================================================================
 
 local dungeons = {}
+local bossGroups = {}  -- creatureEntry -> groupId (multi-mob encounters count once)
 
 -- ============================================================================
 -- Load Dungeon Data from World DB
@@ -97,7 +98,23 @@ local function LoadDungeons()
     print("[mod-dungeon-challenge] AIO Server: Loaded " .. #dungeons .. " dungeons.")
 end
 
+-- Multi-mob encounters (e.g. the Malachar trio in FL Ak'Tazia) share one boss
+-- credit. C++ grants it on the LAST member's death; this tracker ticks the
+-- group once on its FIRST member kill (aliveness scans are not practical in
+-- Lua) — totals match, the HUD may just tick a grouped encounter early.
+local function LoadBossGroups()
+    bossGroups = {}
+    local query = WorldDBQuery(
+        "SELECT creature_entry, group_id FROM dungeon_challenge_boss_group")
+    if query then
+        repeat
+            bossGroups[query:GetUInt32(0)] = query:GetUInt32(1)
+        until not query:NextRow()
+    end
+end
+
 LoadDungeons()
+LoadBossGroups()
 
 -- ============================================================================
 -- Helper: Build config table for client (small, safe for init message)
@@ -335,6 +352,7 @@ ServerHandlers.StartChallenge = function(player, mapId, difficulty)
         state = "pending",
         bossKills = {},
         killedBossGuids = {},
+        killedBossGroups = {},  -- groupId -> true (grouped encounters count once)
         affixString = BuildAffixString(difficulty),
         personalBest = {},   -- [guidLow] = pre-run personal best seconds (or nil)
         globalBest = nil,    -- pre-run global best seconds (or nil)
@@ -521,6 +539,13 @@ RegisterPlayerEvent(7, function(event, player, creature)  -- PLAYER_EVENT_ON_KIL
     local cGuid = creature:GetGUIDLow()
     if run.killedBossGuids[cGuid] then return end
     run.killedBossGuids[cGuid] = true
+
+    -- Grouped encounter: count the group only once (see LoadBossGroups)
+    local groupId = bossGroups[creature:GetEntry()]
+    if groupId then
+        if run.killedBossGroups[groupId] then return end
+        run.killedBossGroups[groupId] = true
+    end
 
     run.bossesKilled = run.bossesKilled + 1
     local elapsed = os.time() - run.startTime

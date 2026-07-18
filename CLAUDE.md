@@ -262,6 +262,7 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 |-------|---------|
 | `dungeon_challenge_dungeons` | Dungeon definitions (MapID, entrance, timer, bosses). Entrance coords mirror the `areatrigger_teleport` entrance rows — the same source the RDF teleport uses (`LFGMgr::LoadLFGDungeons` → `GetMapEntranceTrigger`). The seed SQL uses no `DROP TABLE` so an updater re-apply keeps later-added rows (e.g. FL dungeons). Both loaders (C++ and Lua) only read rows with `enabled = 1` — new dungeons can be staged disabled |
 | `dungeon_challenge_spell_override` | Per-spell damage tuning (spellId, mapId, modPct, dotModPct) |
+| `dungeon_challenge_boss_group` | Multi-mob encounters counted as ONE boss (creature_entry, map_id, group_id). C++ grants the boss credit when the LAST living group member dies; the Lua tracker ticks the group on its first member kill. Seeded: Malachar trio in FL Ak'Tazia (80260-80262 / 84260-84262) |
 | `creature_template` (Entry 500000) | Challenge NPC (fallback) |
 | `gameobject_template` (Entry 500002) | Dungeon Challenge Stone (primary interaction) |
 
@@ -285,7 +286,7 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 | Gossip Actions | 1000-5999 | Menu navigation (Lua + C++) |
 | Spells | 900050-900060 | Affix DBC spells (all affixes have a DBC aura) |
 | Maps | 574-668 | WotLK 5-man dungeons |
-| Maps | 738-748 | FL custom dungeons (standalone maps). Heroic-capable: 739/740/744/745/746/748 (twin-spawn masks; on 744/748 bosses exist ONLY in the heroic set). Single-difficulty: 747. Raid-type: 738/743 (disabled, phase 3) + 742 Conclave (playable — bosses on raid-normal). Boss ranks curated via `ForgottenLand2.0/output/sql/31_fl_dungeon_challenge_bossranks.sql` |
+| Maps | 738-748 | FL custom dungeons (standalone maps). Heroic-capable: 739/740/744/745/746/748 (twin-spawn masks; on 744/748 bosses exist ONLY in the heroic set). Single-difficulty: 747. Raid-type: 738/743 (disabled, phase 3) + 742 Conclave (playable — bosses on raid-normal). Boss ranks curated via `ForgottenLand2.0/output/sql/31_fl_dungeon_challenge_bossranks.sql`. 740 Ak'Tazia = 2 encounters: the Malachar trio is grouped via `dungeon_challenge_boss_group` (operator-confirmed one encounter) |
 
 ## Code Conventions
 

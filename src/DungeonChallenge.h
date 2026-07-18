@@ -252,6 +252,7 @@ public:
     void LoadConfig(bool reload);
     void LoadDungeonData();
     void LoadAffixData();
+    void LoadBossGroups();
     void LoadLeaderboard();
     void LoadSpellOverrides();
     void LoadSnapshots();
@@ -278,6 +279,9 @@ public:
     AffixInfo const* GetAffixInfo(DungeonChallengeAffix affix) const;
     std::vector<AffixInfo> const& GetAllAffixes() const { return _affixes; }
     std::vector<DungeonChallengeAffix> GetAffixesForDifficulty(uint32 difficulty) const;
+
+    // Boss Groups (multi-mob encounters counted as one boss)
+    uint32 GetBossGroupId(uint32 creatureEntry) const;
 
     // Spell Override
     SpellOverrideEntry const* GetSpellOverride(uint32 spellId, uint32 mapId) const;
@@ -340,6 +344,7 @@ private:
     // Data
     std::vector<DungeonInfo> _dungeons;
     std::vector<AffixInfo> _affixes;
+    std::unordered_map<uint32, uint32> _bossGroupByEntry; // creature entry -> boss group id
     std::unordered_map<uint32, ChallengeRun> _activeRuns; // instanceId -> run
     std::unordered_map<uint32, std::vector<LeaderboardEntry>> _leaderboard; // mapId -> entries
     std::vector<SpellOverrideEntry> _spellOverrides;

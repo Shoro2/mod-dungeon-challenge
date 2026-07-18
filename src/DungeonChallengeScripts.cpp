@@ -24,6 +24,7 @@ public:
     {
         sDungeonChallengeMgr->LoadDungeonData();
         sDungeonChallengeMgr->LoadAffixData();
+        sDungeonChallengeMgr->LoadBossGroups();
         sDungeonChallengeMgr->LoadLeaderboard();
         sDungeonChallengeMgr->LoadSpellOverrides();
         sDungeonChallengeMgr->LoadSnapshots();
@@ -747,30 +748,53 @@ public:
         // Check if this was a boss (rank >= 3, world boss, or dungeon boss)
         if (IsChallengeBoss(creature))
         {
-            run->bossesKilled++;
-            bool isFinalBoss = run->AllBossesKilled();
-
-            DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
-            std::string bossName = creature->GetName();
-
-            Map::PlayerList const& players = map->GetPlayers();
-            for (auto const& ref : players)
+            // Grouped encounter (e.g. the Malachar trio in FL Ak'Tazia):
+            // all members share one boss credit, granted when the LAST
+            // living member of the group dies. Earlier member kills are
+            // not counted, announced, or snapshotted.
+            bool countKill = true;
+            if (uint32 groupId = sDungeonChallengeMgr->GetBossGroupId(creature->GetEntry()))
             {
-                if (Player* player = ref.GetSource())
+                for (auto const& pair : map->GetCreatureBySpawnIdStore())
                 {
-                    ChatHandler(player->GetSession()).PSendSysMessage(
-                        "|cff00ff00[Dungeon Challenge]|r Boss |cffff8000{}|r defeated! ({}/{})",
-                        bossName, run->bossesKilled, run->totalBosses);
+                    Creature* other = pair.second;
+                    if (!other || other == creature || !other->IsAlive())
+                        continue;
+                    if (sDungeonChallengeMgr->GetBossGroupId(other->GetEntry()) == groupId)
+                    {
+                        countKill = false;
+                        break;
+                    }
                 }
             }
 
-            // Save boss kill snapshot
-            sDungeonChallengeMgr->SaveBossKillSnapshot(run, creature, isFinalBoss, isFinalBoss && !run->IsTimedOut());
-
-            // Check completion
-            if (isFinalBoss)
+            if (countKill)
             {
-                sDungeonChallengeMgr->CompleteRun(run);
+                run->bossesKilled++;
+                bool isFinalBoss = run->AllBossesKilled();
+
+                DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
+                std::string bossName = creature->GetName();
+
+                Map::PlayerList const& players = map->GetPlayers();
+                for (auto const& ref : players)
+                {
+                    if (Player* player = ref.GetSource())
+                    {
+                        ChatHandler(player->GetSession()).PSendSysMessage(
+                            "|cff00ff00[Dungeon Challenge]|r Boss |cffff8000{}|r defeated! ({}/{})",
+                            bossName, run->bossesKilled, run->totalBosses);
+                    }
+                }
+
+                // Save boss kill snapshot
+                sDungeonChallengeMgr->SaveBossKillSnapshot(run, creature, isFinalBoss, isFinalBoss && !run->IsTimedOut());
+
+                // Check completion
+                if (isFinalBoss)
+                {
+                    sDungeonChallengeMgr->CompleteRun(run);
+                }
             }
         }
 
