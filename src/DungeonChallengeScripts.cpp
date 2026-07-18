@@ -1,4 +1,5 @@
 #include "DungeonChallenge.h"
+#include "DBCStores.h"
 #include "Group.h"
 #include "MapMgr.h"
 #include "GameTime.h"
@@ -101,6 +102,54 @@ public:
         FailRunIfPlayerLeft(player);
     }
 
+    // Raise the dungeon difficulty to heroic BEFORE the challenge teleport
+    // resolves, so the very first entry already creates a heroic instance.
+    // The Lua UI cannot set difficulties — it writes the pending row
+    // (synchronously) and teleports; this hook picks the row up. Maps
+    // without a heroic MapDifficulty entry (custom FL dungeons) keep their
+    // single difficulty and are exempt.
+    bool OnPlayerBeforeTeleport(Player* player, uint32 mapid, float /*x*/, float /*y*/,
+        float /*z*/, float /*orientation*/, uint32 /*options*/, Unit* /*target*/) override
+    {
+        if (!sDungeonChallengeMgr->IsEnabled())
+            return true;
+
+        if (player->GetMapId() == mapid || !sDungeonChallengeMgr->IsDungeonCapable(mapid))
+            return true;
+
+        if (!GetMapDifficultyData(mapid, DUNGEON_DIFFICULTY_HEROIC))
+            return true;
+
+        // Only act on an actual pending challenge for this destination map
+        PendingChallengeInfo const* pending = sDungeonChallengePending->GetPending(player->GetGUID());
+        if (pending && pending->mapId != mapid)
+            pending = nullptr;
+
+        if (!pending)
+        {
+            QueryResult result = CharacterDatabase.Query(
+                "SELECT map_id FROM dungeon_challenge_pending WHERE player_guid = {} AND map_id = {}",
+                player->GetGUID().GetCounter(), mapid);
+            if (!result)
+                return true;
+        }
+
+        // Group difficulty decides the new instance for grouped players, the
+        // player's own difficulty for solo runs.
+        if (Group* group = player->GetGroup())
+        {
+            if (group->GetDungeonDifficulty() != DUNGEON_DIFFICULTY_HEROIC)
+                group->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
+        }
+        else if (player->GetDungeonDifficulty() != DUNGEON_DIFFICULTY_HEROIC)
+        {
+            player->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
+            player->SendDungeonDifficulty(false);
+        }
+
+        return true;
+    }
+
     void OnPlayerMapChanged(Player* player) override
     {
         if (!sDungeonChallengeMgr->IsEnabled())
@@ -169,20 +218,21 @@ public:
             return;
         }
 
-        // Check if dungeon is heroic — challenges require heroic mode
-        if (map->GetDifficulty() == DUNGEON_DIFFICULTY_NORMAL)
+        // Check if dungeon is heroic — challenges require heroic mode. Maps
+        // without a heroic MapDifficulty entry (custom FL dungeons) run their
+        // single difficulty and are exempt. Normally unreachable: the
+        // OnPlayerBeforeTeleport hook already raised the difficulty, so this
+        // only remains as a safety net.
+        if (map->GetDifficulty() == DUNGEON_DIFFICULTY_NORMAL
+            && GetMapDifficultyData(map->GetId(), DUNGEON_DIFFICULTY_HEROIC))
         {
-            // Set heroic difficulty so the next entry will be heroic
+            // Set heroic difficulty so the next entry will be heroic. For
+            // groups the GROUP difficulty must be set (it decides the new
+            // instance) — setting only the members would bounce forever.
             if (group)
             {
-                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
-                {
-                    if (Player* member = ref->GetSource())
-                    {
-                        member->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
-                        member->SendDungeonDifficulty(true);
-                    }
-                }
+                if (group->GetDungeonDifficulty() != DUNGEON_DIFFICULTY_HEROIC)
+                    group->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
             }
             else
             {

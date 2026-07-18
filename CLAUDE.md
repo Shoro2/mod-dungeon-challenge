@@ -57,7 +57,7 @@ mod-dungeon-challenge/
 | `DungeonChallengePendingStore` | DungeonChallenge.h | In-memory pending challenges (NPC fallback path) |
 | `npc_dungeon_challenge` | DungeonChallengeNpc.cpp | CreatureScript for the gossip NPC (fallback) |
 | `DungeonChallengeWorldScript` | DungeonChallengeScripts.cpp | Config loading, startup, pending cleanup |
-| `DungeonChallengePlayerScript` | DungeonChallengeScripts.cpp | Login, map change (solo+group), death |
+| `DungeonChallengePlayerScript` | DungeonChallengeScripts.cpp | Login, map change (solo+group), death, pre-teleport heroic switch (`OnPlayerBeforeTeleport`) |
 | `DungeonChallengeCreatureScript` | DungeonChallengeScripts.cpp | Creature update (Call for Help, Immolation, DataMap processing) |
 | `DungeonChallengeCreatureDeathScript` | DungeonChallengeScripts.cpp | Creature death (boss kill, affixes, non-mythic lock, snapshots) |
 | `DungeonChallengeUnitScript` | DungeonChallengeScripts.cpp | Damage modification via UnitScript hooks |
@@ -108,9 +108,18 @@ Client: Clicks "START CHALLENGE" → AIO.Msg():Add("StartChallenge", mapId, diff
     ↓
 Lua Server: StartChallenge handler
     ├─ Validation (group size ≤ 5, difficulty range)
-    ├─ INSERT INTO dungeon_challenge_pending (player_guid, map_id, difficulty)
+    ├─ REPLACE INTO dungeon_challenge_pending — SYNCHRONOUS (CharDBQuery), so the
+    │  row is committed before Teleport fires the C++ hook
     ├─ AIO.Handle(member, "ChallengeStarted", ...) for each group member
     └─ Teleport (solo or all group members)
+    ↓
+C++: OnPlayerBeforeTeleport() (PlayerScript hook, inside Player::TeleportTo)
+    ├─ Destination is a challenge dungeon + pending row exists?
+    ├─ Sets HEROIC before the instance is created: Group::SetDungeonDifficulty
+    │  for groups (the GROUP difficulty decides the new instance), player
+    │  difficulty for solo
+    └─ Maps without a heroic MapDifficulty entry (custom FL dungeons) are
+       exempt and run their single difficulty
     ↓
 C++: OnPlayerMapChanged() (PlayerScript hook)
     ├─ Check in-memory pending (NPC fallback) OR DB pending (Lua path)
@@ -247,7 +256,7 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 
 | Table | Purpose |
 |-------|---------|
-| `dungeon_challenge_dungeons` | Dungeon definitions (MapID, entrance, timer, bosses) |
+| `dungeon_challenge_dungeons` | Dungeon definitions (MapID, entrance, timer, bosses). Entrance coords mirror the `areatrigger_teleport` entrance rows — the same source the RDF teleport uses (`LFGMgr::LoadLFGDungeons` → `GetMapEntranceTrigger`). The seed SQL uses no `DROP TABLE` so an updater re-apply keeps later-added rows (e.g. FL dungeons) |
 | `dungeon_challenge_spell_override` | Per-spell damage tuning (spellId, mapId, modPct, dotModPct) |
 | `creature_template` (Entry 500000) | Challenge NPC (fallback) |
 | `gameobject_template` (Entry 500002) | Dungeon Challenge Stone (primary interaction) |

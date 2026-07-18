@@ -71,24 +71,26 @@ void DungeonChallengeMgr::LoadDungeonData()
     {
         LOG_WARN("module", ">> mod-dungeon-challenge: No dungeon data found in dungeon_challenge_dungeons table. Using defaults.");
 
-        // Default WotLK dungeons
+        // Default WotLK dungeons. Entrances mirror the areatrigger_teleport
+        // entrance rows — the same source the RDF teleport resolves through
+        // LFGMgr::LoadLFGDungeons -> GetMapEntranceTrigger.
         _dungeons = {
-            { 574, "Utgarde Keep",              1.31f,  -16.57f, 15.21f, 0.0f, 25, 3 },
-            { 575, "Utgarde Pinnacle",          0.0f,   0.0f,    0.0f,   0.0f, 28, 4 },
-            { 576, "The Nexus",                 0.0f,   0.0f,    0.0f,   0.0f, 28, 4 },
-            { 578, "The Oculus",                0.0f,   0.0f,    0.0f,   0.0f, 35, 4 },
-            { 595, "Culling of Stratholme",     0.0f,   0.0f,    0.0f,   0.0f, 30, 5 },
-            { 599, "Halls of Stone",            0.0f,   0.0f,    0.0f,   0.0f, 28, 3 },
-            { 600, "Drak'Tharon Keep",          0.0f,   0.0f,    0.0f,   0.0f, 25, 4 },
-            { 601, "Azjol-Nerub",               0.0f,   0.0f,    0.0f,   0.0f, 20, 3 },
-            { 602, "Halls of Lightning",        0.0f,   0.0f,    0.0f,   0.0f, 28, 4 },
-            { 604, "Gundrak",                   0.0f,   0.0f,    0.0f,   0.0f, 28, 4 },
-            { 608, "Violet Hold",               0.0f,   0.0f,    0.0f,   0.0f, 25, 3 },
-            { 619, "Ahn'kahet: The Old Kingdom", 0.0f,  0.0f,    0.0f,   0.0f, 30, 5 },
-            { 632, "The Forge of Souls",        0.0f,   0.0f,    0.0f,   0.0f, 22, 2 },
-            { 650, "Trial of the Champion",     0.0f,   0.0f,    0.0f,   0.0f, 25, 3 },
-            { 658, "Pit of Saron",              0.0f,   0.0f,    0.0f,   0.0f, 28, 3 },
-            { 668, "Halls of Reflection",       0.0f,   0.0f,    0.0f,   0.0f, 25, 2 },
+            { 574, "Utgarde Keep",              153.789f,  -86.548f,   12.551f,  0.304f,    25, 3 },
+            { 575, "Utgarde Pinnacle",          584.117f,  -327.974f, 110.138f,  3.122f,    28, 4 },
+            { 576, "The Nexus",                 145.87f,   -10.554f,  -16.636f,  1.528f,    28, 4 },
+            { 578, "The Oculus",                1055.93f,  986.85f,   361.07f,   5.745f,    35, 4 },
+            { 595, "Culling of Stratholme",     1431.1f,   556.92f,    36.69f,   5.16f,     30, 5 },
+            { 599, "Halls of Stone",            1153.24f,  806.164f,  195.937f,  4.715f,    28, 3 },
+            { 600, "Drak'Tharon Keep",          -517.343f, -487.976f,  11.01f,   4.831f,    25, 4 },
+            { 601, "Azjol-Nerub",               413.314f,  795.968f,  831.351f,  5.5f,      20, 3 },
+            { 602, "Halls of Lightning",        1331.47f,  259.619f,   53.398f,  4.772f,    28, 4 },
+            { 604, "Gundrak",                   1891.84f,  832.169f,  176.669f,  2.109f,    28, 4 },
+            { 608, "Violet Hold",               1808.82f,  803.93f,    44.364f,  6.282f,    25, 3 },
+            { 619, "Ahn'kahet: The Old Kingdom", 333.351f, -1109.94f,  69.772f,  0.553f,    30, 5 },
+            { 632, "The Forge of Souls",        4922.86f,  2175.63f,  638.734f,  2.00355f,  22, 2 },
+            { 650, "Trial of the Champion",     805.227f,  618.038f,  412.393f,  3.1456f,   25, 3 },
+            { 658, "Pit of Saron",              435.743f,  212.413f,  528.709f,  6.25646f,  28, 3 },
+            { 668, "Halls of Reflection",       5239.01f,  1932.64f,  707.695f,  0.800565f, 25, 2 },
         };
 
         LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} default dungeons.", _dungeons.size());

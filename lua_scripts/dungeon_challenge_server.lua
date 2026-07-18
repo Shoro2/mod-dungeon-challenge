@@ -275,11 +275,15 @@ ServerHandlers.StartChallenge = function(player, mapId, difficulty)
         return
     end
 
-    -- Note: Heroic difficulty is set by C++ OnPlayerMapChanged hook
+    -- Note: Heroic difficulty is set by the C++ OnPlayerBeforeTeleport hook,
+    -- which reads the pending rows written below — BEFORE the port resolves,
+    -- so the first entry already creates a heroic instance.
 
-    -- Store pending challenge in DB (read by C++ OnPlayerMapChanged)
+    -- Store pending challenge in DB (read by C++ OnPlayerBeforeTeleport and
+    -- OnPlayerMapChanged). CharDBQuery instead of CharDBExecute: the write
+    -- must be committed synchronously before Teleport fires the C++ hook.
     local guid = player:GetGUIDLow()
-    CharDBExecute(string.format(
+    CharDBQuery(string.format(
         "REPLACE INTO `dungeon_challenge_pending` "
         .. "(`player_guid`, `map_id`, `difficulty`) VALUES (%d, %d, %d)",
         guid, mapId, difficulty))
@@ -288,8 +292,8 @@ ServerHandlers.StartChallenge = function(player, mapId, difficulty)
     if group then
         local members = group:GetMembers()
         for _, member in ipairs(members) do
-            -- Store pending for each group member
-            CharDBExecute(string.format(
+            -- Store pending for each group member (synchronous, see above)
+            CharDBQuery(string.format(
                 "REPLACE INTO `dungeon_challenge_pending` "
                 .. "(`player_guid`, `map_id`, `difficulty`) VALUES (%d, %d, %d)",
                 member:GetGUIDLow(), mapId, difficulty))
