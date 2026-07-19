@@ -27,6 +27,8 @@ local CONFIG = {
     -- Must match the worldserver.conf values (DungeonChallenge.SummarySeconds / .DeathEndsRunMode)
     SUMMARY_SECONDS         = 30,   -- run-end summary / auto-leave countdown
     DEATH_ENDS_RUN          = 0,    -- 0 = wipe ends run, 1 = any death (C++ is authoritative; this is informational)
+    MOB_SCAN_INTERVAL_MS    = 1000, -- mob counter HUD scan interval per instance
+    PULL_SCAN_RANGE         = 100,  -- yards around each player scanned for pulled mobs
 }
 
 -- ============================================================================
@@ -490,6 +492,116 @@ RegisterGameObjectGossipEvent(GO_ENTRY, 1, OnGossipHello)
 -- Active Run UI: Eluna Event Hooks
 -- ============================================================================
 
+-- Helper: Boss detection matching C++ IsChallengeBoss()
+-- C++ checks: rank >= 3 OR isWorldBoss() OR IsDungeonBoss()
+-- IsDungeonBoss() checks flags_extra set dynamically by instance scripts
+local function IsChallengeBoss(creature)
+    if creature:GetRank() >= 3 then return true end
+    if creature:IsWorldBoss() then return true end
+    -- IsDungeonBoss may not exist in all Eluna versions; check safely
+    if creature.IsDungeonBoss and creature:IsDungeonBoss() then return true end
+    return false
+end
+
+-- ============================================================================
+-- Mob Counter HUD (top-center client frame)
+--
+-- One scanner per active challenge instance (MOB_SCAN_INTERVAL_MS). Counts:
+--   pulled     — alive hostile creatures in combat within PULL_SCAN_RANGE of
+--                any participant (grid search, so respawn copies, Lil' Bro
+--                splits, bosses and their adds are all included)
+--   left/total — alive / all regular DB-spawned mobs, using the same mob
+--                definition as the C++ affix pass (non-boss, non-critter,
+--                unit_class ~= 0, faction ~= 35). Temp summons are not
+--                dungeon spawns and are excluded here by design.
+-- Values are pushed to all instance players via AIO only when they change.
+-- ============================================================================
+
+local CREATURE_TYPE_CRITTER = 8
+local FACTION_FRIENDLY = 35
+
+-- Mirror of the C++ AssignAffixesToCreatures() mob filter
+local function IsCountableMob(creature)
+    if IsChallengeBoss(creature) then return false end
+    if creature:GetCreatureType() == CREATURE_TYPE_CRITTER then return false end
+    if creature:GetClass() == 0 then return false end
+    if creature:GetFaction() == FACTION_FRIENDLY then return false end
+    return true
+end
+
+local mobScanners = {}  -- instanceId -> { eventId, pulled, left, total }
+
+local function StopMobScanner(instanceId)
+    local scan = mobScanners[instanceId]
+    if not scan then return end
+    mobScanners[instanceId] = nil
+    if scan.eventId then
+        RemoveEventById(scan.eventId)
+    end
+end
+
+local function ScanInstanceMobs(instanceId, mapId)
+    if not mobScanners[instanceId] then return end
+
+    -- The map is re-fetched every tick; the instance may be gone already
+    local map = GetMapById(mapId, instanceId)
+    if not map then
+        StopMobScanner(instanceId)
+        return
+    end
+
+    local players = map:GetPlayers()
+    if not players or #players == 0 then
+        StopMobScanner(instanceId)
+        return
+    end
+
+    -- Regular spawn population: alive / all DB-spawned mobs.
+    -- GetCreatures() is keyed by spawn id — pairs, never ipairs/#.
+    local left, total = 0, 0
+    for _, c in pairs(map:GetCreatures()) do
+        if IsCountableMob(c) then
+            total = total + 1
+            if c:IsAlive() then
+                left = left + 1
+            end
+        end
+    end
+
+    -- Pulled: hostile creatures in combat near any participant (deduped)
+    local pulled = 0
+    local seen = {}
+    for _, p in pairs(players) do
+        for _, c in pairs(p:GetCreaturesInRange(CONFIG.PULL_SCAN_RANGE, 0, 1, 1)) do
+            local guid = c:GetGUIDLow()
+            if not seen[guid] and c:IsInCombat()
+                and c:GetCreatureType() ~= CREATURE_TYPE_CRITTER then
+                seen[guid] = true
+                pulled = pulled + 1
+            end
+        end
+    end
+
+    local scan = mobScanners[instanceId]
+    if pulled == scan.pulled and left == scan.left and total == scan.total then
+        return
+    end
+    scan.pulled, scan.left, scan.total = pulled, left, total
+
+    for _, p in pairs(players) do
+        AIO.Handle(p, "DungeonChallenge", "MobCounters", pulled, left, total)
+    end
+end
+
+local function StartMobScanner(instanceId, mapId)
+    if mobScanners[instanceId] then return end
+    local scan = {}
+    mobScanners[instanceId] = scan
+    scan.eventId = CreateLuaEvent(function()
+        ScanInstanceMobs(instanceId, mapId)
+    end, CONFIG.MOB_SCAN_INTERVAL_MS, 0)  -- repeats = 0: run until removed
+end
+
 -- Detect dungeon entry: start run timer + send RunStart to client
 RegisterPlayerEvent(28, function(event, player)  -- PLAYER_EVENT_ON_MAP_CHANGE
     local guid = player:GetGUIDLow()
@@ -509,6 +621,17 @@ RegisterPlayerEvent(28, function(event, player)  -- PLAYER_EVENT_ON_MAP_CHANGE
             AIO.Handle(player, "DungeonChallenge", "RunStart",
                 run.dungeonName, run.difficulty, run.timerSeconds,
                 run.totalBosses, run.affixString)
+
+            -- Start the per-instance mob counter scanner (no-op if running).
+            -- Late joiners/reconnects get the current values immediately —
+            -- the scanner itself only pushes on change.
+            local instanceId = player:GetInstanceId()
+            StartMobScanner(instanceId, run.mapId)
+            local scan = mobScanners[instanceId]
+            if scan and scan.total then
+                AIO.Handle(player, "DungeonChallenge", "MobCounters",
+                    scan.pulled, scan.left, scan.total)
+            end
         end
     elseif run.state == "running" and newMapId ~= run.mapId then
         -- Player left the dungeon
@@ -516,17 +639,6 @@ RegisterPlayerEvent(28, function(event, player)  -- PLAYER_EVENT_ON_MAP_CHANGE
         trackedRuns[guid] = nil
     end
 end)
-
--- Helper: Boss detection matching C++ IsChallengeBoss()
--- C++ checks: rank >= 3 OR isWorldBoss() OR IsDungeonBoss()
--- IsDungeonBoss() checks flags_extra set dynamically by instance scripts
-local function IsChallengeBoss(creature)
-    if creature:GetRank() >= 3 then return true end
-    if creature:IsWorldBoss() then return true end
-    -- IsDungeonBoss may not exist in all Eluna versions; check safely
-    if creature.IsDungeonBoss and creature:IsDungeonBoss() then return true end
-    return false
-end
 
 -- Detect boss kills: update tracker for all participants
 RegisterPlayerEvent(7, function(event, player, creature)  -- PLAYER_EVENT_ON_KILL_CREATURE

@@ -128,6 +128,11 @@ The Challenge NPC has entry ID **500000**. Spawn it in a capital city:
   (all participants dead at once; solo = any death) **ends the run**
   (configurable to "any death" via `DeathEndsRunMode`).
 - **Affixes**: ~15% of mobs have special abilities (marked in chat)
+- **Mob Counters**: A top-center HUD shows **"Mobs pulled"** (hostile mobs
+  currently in combat near the party — respawn copies, Lil' Bro splits and
+  boss adds included) and **"Total mob spawns left: y/x"** (alive / all
+  regular mob spawns of the instance). Toggle with `/dc counters`, drag to
+  reposition.
 - **Cancel**: The run can be abandoned via the NPC or by the group leader
 
 ### When a Run Ends

@@ -1196,6 +1196,59 @@ local function StartAutoHide(delay)
 end
 
 -- ============================================================================
+-- Mob Counter Frame (top-center HUD: pulled mobs + total spawns left)
+-- Fed by the server-side per-instance scanner via the MobCounters message.
+-- ============================================================================
+
+AIO.AddSavedVarChar("DChallenge_CounterPos")
+DChallenge_CounterPos = DChallenge_CounterPos or {}
+
+local counterHidden = false  -- manual toggle via /dc counters
+
+local COUNTER_W = 240
+
+local CounterFrame = CreateFrame("Frame", "DCCounterFrame", UIParent)
+CounterFrame:SetWidth(COUNTER_W)
+CounterFrame:SetHeight(46)
+CounterFrame:SetPoint("TOP", UIParent, "TOP", 0, -35)
+CounterFrame:SetMovable(true)
+CounterFrame:EnableMouse(true)
+CounterFrame:RegisterForDrag("LeftButton")
+CounterFrame:SetScript("OnDragStart", CounterFrame.StartMoving)
+CounterFrame:SetScript("OnDragStop", CounterFrame.StopMovingOrSizing)
+CounterFrame:SetBackdrop({
+    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+    tile = true, tileSize = 16, edgeSize = 16,
+    insets = { left = 4, right = 4, top = 4, bottom = 4 }
+})
+CounterFrame:SetBackdropColor(0.05, 0.05, 0.1, 0.92)
+CounterFrame:SetBackdropBorderColor(0.4, 0.4, 0.8, 0.8)
+CounterFrame:SetFrameStrata("HIGH")
+CounterFrame:Hide()
+
+AIO.SavePosition(CounterFrame, true)
+
+-- Line 1: currently pulled mobs
+local cntPulled = CounterFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+cntPulled:SetPoint("TOP", CounterFrame, "TOP", 0, -9)
+cntPulled:SetJustifyH("CENTER")
+
+-- Line 2: remaining / total mob spawns
+local cntSpawns = CounterFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+cntSpawns:SetPoint("TOP", cntPulled, "BOTTOM", 0, -3)
+cntSpawns:SetJustifyH("CENTER")
+
+local function UpdateCounterDisplay(pulled, left, total)
+    local pulledColor = (pulled or 0) > 0 and "|cffff8000" or "|cff00ff00"
+    cntPulled:SetText(string.format(
+        "Mobs pulled: %s%d|r", pulledColor, pulled or 0))
+    cntSpawns:SetText(string.format(
+        "Total mob spawns left: |cff00ff00%d|r|cffaaaaaa/%d|r",
+        left or 0, total or 0))
+end
+
+-- ============================================================================
 -- Run Summary Frame (shown when a run ends: dungeon clear OR death)
 -- ============================================================================
 
@@ -1446,9 +1499,23 @@ DC_ClientHandlers.RunStart = function(player, dungeonName, difficulty, timerSeco
     summaryLeaveSent = false
     SummaryFrame:Hide()
     TrackerFrame:Show()
+    -- Mob counter HUD: reset; shown by the first MobCounters update
+    counterHidden = false
+    CounterFrame:Hide()
     DEFAULT_CHAT_FRAME:AddMessage(string.format(
         "|cff00ff00[Dungeon Challenge]|r Tracker active: |cffff8000%s|r +%d",
         dungeonName or "?", difficulty or 0))
+end
+
+-- Live mob counters from the server-side instance scanner.
+-- summaryShown guard: after a wipe the run-end summary is up while the
+-- scanner may still push (mobs evading) — don't pop the HUD back open.
+DC_ClientHandlers.MobCounters = function(player, pulled, left, total)
+    if not activeRunData or activeRunData.completed or summaryShown then return end
+    UpdateCounterDisplay(pulled, left, total)
+    if not counterHidden then
+        CounterFrame:Show()
+    end
 end
 
 -- Boss killed notification
@@ -1476,6 +1543,7 @@ DC_ClientHandlers.RunCompleted = function(player, totalElapsed, inTime)
     activeRunData.completed = true
     activeRunData.completionTime = totalElapsed or 0
     activeRunData.inTime = inTime
+    CounterFrame:Hide()
     UpdateTrackerDisplay()
 
     if inTime then
@@ -1498,9 +1566,10 @@ DC_ClientHandlers.ShowRunSummary = function(player, outcome, dungeonName, diffic
     effTime = effTime or 0
     deaths = deaths or 0
 
-    -- The summary replaces the live tracker.
+    -- The summary replaces the live tracker and the mob counter HUD.
     autoHideTimer = nil
     TrackerFrame:Hide()
+    CounterFrame:Hide()
 
     local cleared = (outcome == 1)
     if cleared then
@@ -1567,6 +1636,7 @@ DC_ClientHandlers.RunEnd = function(player)
     summaryCountdown = nil
     summaryLeaveSent = false
     TrackerFrame:Hide()
+    CounterFrame:Hide()
     SummaryFrame:Hide()
 end
 
@@ -1594,6 +1664,21 @@ SlashCmdList["DUNGEONCHALLENGE"] = function(msg)
         else
             DEFAULT_CHAT_FRAME:AddMessage(
                 "|cff00ff00[Dungeon Challenge]|r No active run to track.")
+        end
+        return
+    end
+
+    -- /dc counters — toggle top-center mob counter HUD
+    if msg == "counters" then
+        if CounterFrame:IsShown() then
+            counterHidden = true
+            CounterFrame:Hide()
+        elseif activeRunData and not activeRunData.completed then
+            counterHidden = false
+            CounterFrame:Show()
+        else
+            DEFAULT_CHAT_FRAME:AddMessage(
+                "|cff00ff00[Dungeon Challenge]|r No active run.")
         end
         return
     end
