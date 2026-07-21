@@ -217,7 +217,7 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 | 7 | Lil' Bro | Splits 1→2→4 on death, -90% HP each tier | 70 | 900059 (visual, logic C++) |
 | 8 | Damage Reduce | Allies within 30y take -25% damage | 80 | 900055 (visual, logic C++) |
 | 9 | Bigger Boy | +50% HP, increased size, +10% damage | 90 | 900057 (size+dmg DBC, HP C++) |
-| 10 | Hell Touched | +666 fire+shadow dmg on hit, -10% stats debuff (10s, 10 stacks) | 100 | 900054 (visual) + 900053 (debuff) |
+| 10 | Hell Touched | +666 fire+shadow dmg on hit, -2% stats debuff per stack (10s, 10 stacks = -20%) | 100 | 900054 (visual) + 900053 (debuff) |
 
 ### DBC Spell IDs (created manually in Stoneharry spell editor)
 
@@ -226,8 +226,8 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 | 900050 | Speedy | Aura on NPC: +100% move speed, +10% melee haste |
 | 900051 | Immolation Aura | Aura on NPC: fire visual (damage in C++) |
 | 900052 | CC Immunity | Aura on NPC: mechanic immunity (all CC) |
-| 900053 | Hell Touched Aura | Debuff on player: -10% all stats, 10s, stackable to 10 |
-| 900054 | Hell Touched | Aura on NPC: Hell Touched visual |
+| 900053 | Hell Touched Aura | Debuff on player: -2% all stats per stack, 10s, stackable to 10 (-20% at full) |
+| 900054 | Hell Touched | Aura on NPC: Hell Touched visual (stat effect neutralized to 0%) |
 | 900055 | Damage Reduction Aura | Aura on NPC: Damage Reduction visual |
 | 900056 | Big Boy | Aura on NPC: size increase |
 | 900057 | Bigger Boy | Aura on NPC: size + damage increase |

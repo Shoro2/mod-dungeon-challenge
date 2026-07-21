@@ -46,7 +46,7 @@ local AFFIXES = {
     { id = 7,  name = "Lil' Bro",        desc = "Splits into 2 on death (1->2->4), -90% HP each tier",  minDiff = 70,  spellId = 900059 },
     { id = 8,  name = "Damage Reduce",   desc = "Allies within 30y take -25% damage",                    minDiff = 80,  spellId = 900055 },
     { id = 9,  name = "Bigger Boy",      desc = "Additional +50% HP, increased size, +10% damage",       minDiff = 90,  spellId = 900057 },
-    { id = 10, name = "Hell Touched",    desc = "+666 hellfire dmg on hit, -10% stats (10s, stacks 10)", minDiff = 100, spellId = 900054 },
+    { id = 10, name = "Hell Touched",    desc = "+666 hellfire dmg on hit, -2% stats per stack (10s, stacks 10)", minDiff = 100, spellId = 900054 },
 }
 
 -- ============================================================================

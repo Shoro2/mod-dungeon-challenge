@@ -43,7 +43,7 @@ enum DungeonChallengeAffix : uint32
     AFFIX_LIL_BRO           = 7,  // On death: split 1->2->4 with -90% HP each tier
     AFFIX_DAMAGE_REDUCE     = 8,  // Allies within 30y take -25% damage
     AFFIX_BIGGER_BOY        = 9,  // Additional +50% HP, size/damage via DBC
-    AFFIX_HELL_TOUCHED      = 10, // Extra 666 fire+shadow dmg, -10% stats debuff (10s, 10 stacks)
+    AFFIX_HELL_TOUCHED      = 10, // Extra 666 fire+shadow dmg, -2% stats debuff per stack (10s, 10 stacks)
 
     AFFIX_MAX
 };
@@ -55,7 +55,7 @@ enum DungeonChallengeAffix : uint32
 constexpr uint32 SPELL_AFFIX_SPEEDY              = 900050;  // Aura on NPC: +100% move speed, +10% melee haste
 constexpr uint32 SPELL_AFFIX_IMMOLATION          = 900051;  // Aura on NPC: fire visual (damage in C++)
 constexpr uint32 SPELL_AFFIX_CC_IMMUNITY         = 900052;  // Aura on NPC: mechanic immunity (all CC)
-constexpr uint32 SPELL_AFFIX_HELL_TOUCHED_DEBUFF = 900053;  // Debuff on player: -10% all stats, 10s, stack 10
+constexpr uint32 SPELL_AFFIX_HELL_TOUCHED_DEBUFF = 900053;  // Debuff on player: -2% all stats per stack, 10s, stack 10
 constexpr uint32 SPELL_AFFIX_HELL_TOUCHED        = 900054;  // Aura on NPC: Hell Touched visual
 constexpr uint32 SPELL_AFFIX_DAMAGE_REDUCE       = 900055;  // Aura on NPC: Damage Reduction visual
 constexpr uint32 SPELL_AFFIX_BIG_BOY             = 900056;  // Aura on NPC: size increase
