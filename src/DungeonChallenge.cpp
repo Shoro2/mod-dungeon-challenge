@@ -433,7 +433,23 @@ ChallengeRun* DungeonChallengeMgr::CreateChallengeRun(uint32 instanceId, uint32 
 
 void DungeonChallengeMgr::RemoveChallengeRun(uint32 instanceId)
 {
-    _activeRuns.erase(instanceId);
+    auto it = _activeRuns.find(instanceId);
+    if (it == _activeRuns.end())
+        return;
+
+    // CreateChallengeRun caches &_activeRuns[instanceId] on the map's DataMap, and
+    // ProcessCreature() dereferences that pointer. Erasing the container node
+    // without clearing it left a dangling pointer behind and every later
+    // ProcessCreature() call on that map read freed memory -- the null check there
+    // cannot help, because the pointer is non-null and stale.
+    //
+    // Clear it FIRST, then erase. If the instance map is already gone the cached
+    // data died with it, so there is nothing to clear.
+    if (Map* map = sMapMgr->FindMap(it->second.mapId, instanceId))
+        if (auto* mapData = map->CustomData.Get<MapChallengeData>("mod-dungeon-challenge"))
+            mapData->run = nullptr;
+
+    _activeRuns.erase(it);
 }
 
 void DungeonChallengeMgr::StartRun(ChallengeRun* run)
