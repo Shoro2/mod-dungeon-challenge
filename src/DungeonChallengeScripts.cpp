@@ -532,16 +532,29 @@ public:
         if (!map || !map->IsDungeon())
             return;
 
-        // Process unprocessed creatures via DataMap
+        // Resolve the run BEFORE touching per-creature CustomData. This hook runs
+        // for EVERY creature on EVERY dungeon map every tick, and with
+        // MapUpdateInterval=10 that is ~100x/s per creature; GetDefault() hashes a
+        // 21-character string key and heap-allocates the blob on first touch.
+        //
+        // The reorder is behaviour-neutral because ProcessCreature() itself returns
+        // without setting `processed` when no run is RUNNING (DungeonChallenge.cpp:
+        // 550-551) -- which is precisely why the old order kept re-paying three
+        // DataMap lookups per creature per tick, forever, on every dungeon map that
+        // had no challenge running at all.
+        //
+        // Gating on _activeRuns (GetChallengeRun) rather than on ProcessCreature's
+        // internal mapData->run also keeps this path away from that pointer, which
+        // RemoveChallengeRun() leaves dangling (see the module todo.md).
+        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(map->GetInstanceId());
+        if (!run || run->state != CHALLENGE_STATE_RUNNING)
+            return;
+
         auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
         if (!creatureData->processed)
         {
             sDungeonChallengeMgr->ProcessCreature(creature, map);
         }
-
-        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(map->GetInstanceId());
-        if (!run || run->state != CHALLENGE_STATE_RUNNING)
-            return;
 
         // --- MOB RESPAWN: non-boss, non-affix mobs respawn at original position when pulled ---
         if (creature->IsAlive() && creature->IsInCombat()

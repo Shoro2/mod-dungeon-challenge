@@ -6,6 +6,18 @@
 #include "MapMgr.h"
 #include "GameTime.h"
 
+#include <list>
+
+namespace
+{
+    // Candidate radius for the AFFIX_DAMAGE_REDUCE grid search. The gameplay range
+    // stays 30y (enforced by the GetDistance() check at the use site); this padding
+    // only has to be large enough that the grid candidates are a strict superset,
+    // because GetDistance() subtracts both object sizes and scaled-up affix models
+    // can be several yards across.
+    constexpr float DAMAGE_REDUCE_SEARCH_RADIUS = 50.0f;
+}
+
 // ============================================================================
 // Singleton
 // ============================================================================
@@ -677,22 +689,44 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
         {
             // Visual aura on the creature itself
             creature->CastSpell(creature, SPELL_AFFIX_DAMAGE_REDUCE, true);
-            // Apply -25% incoming damage to all allies within 30y
-            Map* map = creature->GetMap();
-            if (map)
+
+            // Apply -25% incoming damage to all allies within 30y.
+            //
+            // Grid-local search instead of walking every DB spawn on the map:
+            // AssignAffixesToCreatures() calls ApplyAffixToCreature() for every
+            // affix of every affixed creature, so with AffixPercentage=40 on a
+            // 960-mob pull the previous full-map walk ran ~384 times in a single
+            // burst at run start -- and again on every affix reapplication.
+            //
+            // The set is preserved exactly:
+            //  * the search radius is padded far beyond 30y, so the candidates are
+            //    a strict superset of anything GetDistance() could accept
+            //    (GetDistance subtracts BOTH object sizes, and Big Boy/Bigger Boy
+            //    scale models up to 2.25x, so the slack has to be generous);
+            //  * the original 30y GetDistance() cut is kept verbatim below;
+            //  * the alive / pet / summon filters are unchanged, which is what
+            //    keeps respawn copies and Lil' Bro splits out (both are summons)
+            //    even though a grid search sees them and the spawn store did not;
+            //  * self is still included, exactly as before -- the old loop had no
+            //    `ally == creature` check either.
+            //
+            // NOTE on the third argument: AllDeadCreaturesInRange's `reqAlive` flag
+            // is inverted from how it reads -- true REJECTS living units. `false`
+            // means "no aliveness filter", i.e. every creature in range, which is
+            // what we want before applying our own IsAlive() check.
+            std::list<Creature*> nearby;
+            creature->GetDeadCreatureListInGrid(nearby, DAMAGE_REDUCE_SEARCH_RADIUS, false);
+
+            for (Creature* ally : nearby)
             {
-                for (auto const& pair : map->GetCreatureBySpawnIdStore())
-                {
-                    Creature* ally = pair.second;
-                    if (!ally || !ally->IsAlive())
-                        continue;
-                    if (ally->IsPet() || ally->IsSummon())
-                        continue;
-                    if (ally->GetDistance(creature) > 30.0f)
-                        continue;
-                    auto* allyData = ally->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
-                    allyData->incomingDamageReduction = std::max(allyData->incomingDamageReduction, 0.25f);
-                }
+                if (!ally || !ally->IsAlive())
+                    continue;
+                if (ally->IsPet() || ally->IsSummon())
+                    continue;
+                if (ally->GetDistance(creature) > 30.0f)
+                    continue;
+                auto* allyData = ally->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+                allyData->incomingDamageReduction = std::max(allyData->incomingDamageReduction, 0.25f);
             }
             break;
         }
