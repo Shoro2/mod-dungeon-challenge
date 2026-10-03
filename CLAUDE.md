@@ -81,7 +81,7 @@ mod-dungeon-challenge/
 
 3. **Spell Override System**: Per-spell damage tuning via DB table `dungeon_challenge_spell_override`. Map-specific or global overrides (modPct for direct, dotModPct for DoTs).
 
-4. **Non-Mythic Lock**: If a creature dies before a challenge is active, the instance is locked as "non-challenge". Prevents exploits with partially cleared dungeons.
+4. **Non-Mythic Lock**: If a creature dies before a challenge is active, the instance is locked as "non-challenge". Prevents exploits with partially cleared dungeons. The lock is silent (operator, 2026-10-03: no per-kill message); a player learns it only from the "This instance is locked!" reply when trying to start a challenge there.
 
 5. **Lua ↔ C++ Communication**: The Lua GameObject UI writes pending challenge data (player_guid, map_id, difficulty) to the `dungeon_challenge_pending` characters DB table. The C++ `OnPlayerMapChanged` hook reads and deletes this entry when the player enters the dungeon. Stale entries are cleaned up on server startup.
 

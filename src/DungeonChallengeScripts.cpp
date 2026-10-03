@@ -761,18 +761,11 @@ public:
                 creature->GetCreatureTemplate()->unit_class != 0 &&
                 !creature->IsPet() && !creature->IsSummon())
             {
+                // Silent on purpose (operator, 2026-10-03): every kill of a
+                // normal run used to tell every player the instance is now
+                // locked. Players learn it only when they try to start a
+                // challenge here (the "This instance is locked!" message).
                 sDungeonChallengeMgr->LockInstanceAsNonChallenge(map);
-
-                Map::PlayerList const& players = map->GetPlayers();
-                for (auto const& ref : players)
-                {
-                    if (Player* player = ref.GetSource())
-                    {
-                        ChatHandler(player->GetSession()).PSendSysMessage(
-                            "|cffff0000[Dungeon Challenge]|r Creature killed without active challenge! "
-                            "This instance can no longer be used for a challenge.");
-                    }
-                }
             }
             return;
         }
