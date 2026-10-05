@@ -1,7 +1,9 @@
 #include "DungeonChallenge.h"
 #include "DBCStores.h"
 #include "Group.h"
+#include "InstanceSaveMgr.h"
 #include "MapMgr.h"
+#include "ObjectAccessor.h"
 #include "GameTime.h"
 #include "ScriptedGossip.h"
 #include "SpellAuraEffects.h"
@@ -119,36 +121,141 @@ public:
         if (!sDungeonChallengeMgr->IsEnabled())
             return true;
 
-        if (player->GetMapId() == mapid)
-            return true;
-
         DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(mapid);
-        if (!info)
+        // The existing Lua pending row also identifies its outside handoff.
+        // Reject an active old run BEFORE departure; ordinary leave ports with
+        // no Start intent keep their existing abandonment behavior.
+        QueryResult intent = (info || sDungeonChallengeMgr->GetDungeonInfo(player->GetMapId()))
+            ? CharacterDatabase.Query("SELECT map_id, difficulty FROM dungeon_challenge_pending WHERE player_guid = {}",
+                player->GetGUID().GetCounter()) : QueryResult();
+        uint32 const requestedMap = intent ? intent->Fetch()[0].Get<uint32>() : 0;
+        uint32 const requestedLevel = intent ? intent->Fetch()[1].Get<uint32>() : 0;
+        Group* group = player->GetGroup();
+        Player* leader = group ? ObjectAccessor::FindConnectedPlayer(group->GetLeaderGUID()) : player;
+        auto matchesParty = [&](ChallengeRun const* run)
+        {
+            if (!run || !leader || run->leaderGuid != leader->GetGUID()
+                || run->mapId != requestedMap || run->difficulty != requestedLevel
+                || run->participants.size() != (group ? group->GetMembersCount() : 1))
+                return false;
+            if (!group)
+                return run->participants.count(player->GetGUID()) != 0;
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                if (!ref->GetSource() || !run->participants.count(ref->GetSource()->GetGUID()))
+                    return false;
+            return true;
+        };
+        ChallengeRun* joining = intent && leader && mapid == requestedMap
+            && leader->GetMapId() == requestedMap
+            ? sDungeonChallengeMgr->GetChallengeRun(leader->GetInstanceId()) : nullptr;
+        bool const matchingJoin = matchesParty(joining) && joining->state == CHALLENGE_STATE_RUNNING;
+        auto refuse = [&]()
+        {
+            ChatHandler(player->GetSession()).SendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r Cannot start while the old run or instance is still occupied. Finish it first.");
+            return false;
+        };
+        if (intent)
+        {
+            if (!leader || (group && group->GetMembersCount() > 5))
+                return refuse();
+            if (sDungeonChallengePending->GetPending(player->GetGUID())
+                || sDungeonChallengePending->GetPending(leader->GetGUID()))
+                return refuse(); // Do not mix a new Lua intent with an old NPC request.
+            auto safeMember = [&](Player* member)
+            {
+                if (!member)
+                    return false;
+                ChallengeRun* active = sDungeonChallengeMgr->GetChallengeRun(member->GetInstanceId());
+                if (!active)
+                    active = sDungeonChallengeMgr->GetChallengeRunByParticipant(member->GetGUID());
+                if (member->GetMapId() == requestedMap)
+                    for (auto const& ref : member->GetMap()->GetPlayers())
+                        if (Player* occupant = ref.GetSource())
+                            if (occupant != player && (!group || occupant->GetGroup() != group))
+                                return false;
+                return !active || active->state == CHALLENGE_STATE_COMPLETED
+                    || active->state == CHALLENGE_STATE_FAILED || active->state == CHALLENGE_STATE_ABANDONED
+                    || active->state == CHALLENGE_STATE_SUMMARY || (matchingJoin && active == joining);
+            };
+            if (!safeMember(player))
+                return refuse();
+            if (group)
+                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                    if (!safeMember(ref->GetSource()))
+                        return refuse();
+            if (mapid != requestedMap)
+                return true; // Outside ACK only; do not change any bind or mode.
+            if (player->GetMapId() == mapid)
+                return refuse();
+        }
+        if (player->GetMapId() == mapid || !info)
             return true;
 
         MapEntry const* targetMap = sMapStore.LookupEntry(mapid);
         if (!targetMap)
             return true;
+        if (intent && !targetMap->IsDungeon())
+            return refuse();
 
         bool const isRaidMap = targetMap->IsRaid();
 
-        // Single-difficulty dungeon maps have nothing to switch
-        if (!isRaidMap && !GetMapDifficultyData(mapid, DUNGEON_DIFFICULTY_HEROIC))
-            return true;
+        bool const hasHeroic = !isRaidMap && GetMapDifficultyData(mapid, DUNGEON_DIFFICULTY_HEROIC);
 
         // Only act on an actual pending challenge for this destination map
         PendingChallengeInfo const* pending = sDungeonChallengePending->GetPending(player->GetGUID());
         if (pending && pending->mapId != mapid)
             pending = nullptr;
 
-        if (!pending)
+        if (!pending && !intent)
+            return true;
+
+        if (intent)
         {
-            QueryResult result = CharacterDatabase.Query(
-                "SELECT map_id FROM dungeon_challenge_pending WHERE player_guid = {} AND map_id = {}",
-                player->GetGUID().GetCounter(), mapid);
-            if (!result)
+            Difficulty const mode = isRaidMap ? Difficulty(info->raidDifficulty)
+                : (hasHeroic ? DUNGEON_DIFFICULTY_HEROIC : DUNGEON_DIFFICULTY_NORMAL);
+            auto canUnbind = [&](Player* member)
+            {
+                if (!member || (member->GetMapId() == mapid
+                    && (!matchingJoin || member->GetInstanceId() != joining->instanceId)))
+                    return false;
+                if (InstancePlayerBind* bind = sInstanceSaveMgr->PlayerGetBoundInstance(member->GetGUID(), mapid, mode))
+                {
+                    if (matchingJoin && bind->save->GetInstanceId() == joining->instanceId)
+                        return true;
+                    if (ChallengeRun* old = sDungeonChallengeMgr->GetChallengeRun(bind->save->GetInstanceId()))
+                        if (old->state == CHALLENGE_STATE_RUNNING || old->state == CHALLENGE_STATE_PREPARING
+                            || old->state == CHALLENGE_STATE_COUNTDOWN)
+                            return false;
+                    if (Map* oldMap = sMapMgr->FindMap(mapid, bind->save->GetInstanceId()))
+                        for (auto const& ref : oldMap->GetPlayers())
+                            if (Player* occupant = ref.GetSource())
+                                if (occupant != player && (!group || occupant->GetGroup() != group))
+                                    return false;
+                }
                 return true;
+            };
+            if (!canUnbind(player) || !canUnbind(leader))
+                return refuse();
+            if (group)
+                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                    if (!canUnbind(ref->GetSource()))
+                        return refuse();
+            // Only the actual destination mode. Never drop a leader's fresh
+            // binding while admitting the remaining frozen participants.
+            if (!matchingJoin)
+                sInstanceSaveMgr->PlayerUnbindInstance(leader->GetGUID(), mapid, mode, true, leader);
+            if (player != leader)
+            {
+                InstancePlayerBind* own = sInstanceSaveMgr->PlayerGetBoundInstance(player->GetGUID(), mapid, mode);
+                if (own && (!matchingJoin || own->save->GetInstanceId() != joining->instanceId))
+                    sInstanceSaveMgr->PlayerUnbindInstance(player->GetGUID(), mapid, mode, true, player);
+            }
         }
+
+        // NPC pending behavior remains unchanged on single-mode maps.
+        if (!isRaidMap && !hasHeroic)
+            return true;
 
         // Group difficulty decides the new instance for grouped players, the
         // player's own difficulty for solo runs.
@@ -166,7 +273,7 @@ public:
                 player->SendRaidDifficulty(false);
             }
         }
-        else if (Group* group = player->GetGroup())
+        else if (group)
         {
             if (group->GetDungeonDifficulty() != DUNGEON_DIFFICULTY_HEROIC)
                 group->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
@@ -289,6 +396,37 @@ public:
 
             if (!fromDb)
                 sDungeonChallengePending->RemovePending(player->GetGUID());
+            return;
+        }
+
+        // Per-member Lua pending rows join the leader's existing run. They
+        // must never overwrite its timer, affixes, origins or participants.
+        if (ChallengeRun* existing = sDungeonChallengeMgr->GetChallengeRun(instanceId))
+        {
+            ObjectGuid const leaderGuid = group ? group->GetLeaderGUID() : player->GetGUID();
+            bool matches = existing->state == CHALLENGE_STATE_RUNNING
+                && existing->mapId == pending->mapId && existing->difficulty == pending->difficulty
+                && existing->leaderGuid == leaderGuid
+                && existing->participants.size() == (group ? group->GetMembersCount() : 1)
+                && existing->participants.count(player->GetGUID());
+            if (group)
+                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                    if (!ref->GetSource() || !existing->participants.count(ref->GetSource()->GetGUID()))
+                        matches = false;
+            if (!matches)
+                ChatHandler(player->GetSession()).SendSysMessage(
+                    "|cffff0000[Dungeon Challenge]|r The instance belongs to a different run or party.");
+            if (!fromDb)
+                sDungeonChallengePending->RemovePending(player->GetGUID());
+            return;
+        }
+
+        // The Lua handoff admits the leader first and waits for its map ACK.
+        // Refuse a changed group instead of creating a second leader instance.
+        if (fromDb && group && player->GetGUID() != group->GetLeaderGUID())
+        {
+            ChatHandler(player->GetSession()).SendSysMessage(
+                "|cffff0000[Dungeon Challenge]|r The group leader must enter first.");
             return;
         }
 

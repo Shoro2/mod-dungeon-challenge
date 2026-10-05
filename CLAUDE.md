@@ -2,6 +2,33 @@
 
 Technical documentation for AI assistants working on this module.
 
+## Private lifecycle candidate (2026-10-05, unbuilt)
+
+Branch `claude/dc-fresh-reentry-20261005` starts at accepted snapshot/doc ref100b.
+Only server Lua and `DungeonChallengeScripts.cpp` change product behavior. Start
+freezes an online solo/leader-owned party, refuses old running/occupied copies,
+leaves the selected map first and waits for actual map acknowledgements. World
+update admits the leader first, then matching members after the leader ACK. C++
+unbinds only the destination's real dungeon/raid mode and joins an existing
+matching run without Create/Start/affix reassignment. Other maps/modes and stored
+snapshot/history/reward rows are untouched; there is no checkpoint resume.
+
+The existing synchronous pending row is recorded/read back BEFORE departure so
+C++ can identify this Start and refuse active NPC/native runs missing Lua tracking.
+This deliberately differs from the earlier proposed pending-after-outside barrier;
+it adds no schema/API and requires coordinator review before any build. The
+outside map cannot consume the intent; cancellation removes matching owned rows.
+No teleport begins within event28's ACK stack and no ACK sleep/retry is used.
+
+Read-only R3 confirmed native348's instance8 normal unload: old137 instances and
+all68 protected controls equal. Real BEFORE is intentionally not run: broad
+UnbindAllInstances can delete sole-owner unloaded old saves. CRTEST2/1431/2448
+Chronolock is an existing level80 normal-mode actor with no binds or GM/RBAC rows;
+no existing heroic actor was found. Auth age7 remains source-unqualified/updater1.
+Compiler, runtime, client, Auth, deployment and group acceptance are all pending.
+Deployed Hell Touched description drift is preserved; do not deploy this whole
+source Lua blindly. The accepted snapshot4112 product is unchanged.
+
 ## Module Overview
 
 **mod-dungeon-challenge** is an AzerothCore 3.3.5a module that implements a Mythic+-style dungeon challenge system. Players click a **Dungeon Challenge Stone** (GameObject) to select a dungeon and difficulty level (1-100) via a **Lua gossip UI**, are teleported (solo or group), and must defeat all bosses within a timer. ~15% of dungeon mobs receive ALL available affixes for the current difficulty level (every 10 levels adds +1 affix to the pool).

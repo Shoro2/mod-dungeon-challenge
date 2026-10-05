@@ -2,8 +2,8 @@
 
 ## Snapshot / lifecycle qualification
 
-- **(high)** Coordinator-reviewed publication and later approved joint host rollout of snapshot4112/MIG081; local native348 and exact owned cleanup are accepted. Retain the disclosed empty unbound instance8 normal-unload residual.
-- **(high)** Implement and qualify the separate fresh-re-entry contract: interrupted old run ends; a real Lua/AIO Start must enter a fresh instance, clear only selected map/difficulty bindings, preserve unrelated binds/old records/rewards, and handle the group leader without forcing remaining participants. Current same-map Start seam is source-confirmed but not yet runtime-reproduced; no checkpoint resume.
+- **(high)** Approved joint host rollout of published snapshot4112/doc100b, MIG081. Native348 and exact owned cleanup accepted; R3 passively confirmed instance8 normal unload, all137 old instances/68 controls equal.
+- **(high)** Review/build/qualify private fresh-re-entry candidate from100b: acknowledged outside handoff, leader ACK before member entry, selected actual mode only, matching group join once. Early verified existing pending intent is required for authoritative pre-departure active-run guard and differs from earlier late-pending proposal. No compiler/runtime/client/deploy acceptance. Known destructive BEFORE is skipped by coordinator decision. One AFTER plan uses existing CRTEST2/1431/GUID2448 normal fixture; Auth source/startup and server-owned transport still need precise qualification/grants. Separate group/cancellation acceptance remains owed; no checkpoint resume.
 
 ## Display
 

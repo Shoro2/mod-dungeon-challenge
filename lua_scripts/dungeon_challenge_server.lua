@@ -265,10 +265,126 @@ ServerHandlers.RequestSnapshots = function(player, mapId)
 end
 
 -- Client requests to start a challenge run
+local startHandoffs = {} -- leaderGuidLow -> transient request; never a resumable run
+local startingPlayers = {} -- memberGuidLow -> same request
+
+local function CancelStart(handoff, message)
+    startHandoffs[handoff.leaderLow] = nil
+    for _, member in ipairs(handoff.members) do
+        startingPlayers[member.low] = nil
+        -- Remove only this unconsumed intent, never old snapshots/history/rewards.
+        CharDBQuery(string.format(
+            "DELETE FROM dungeon_challenge_pending WHERE player_guid=%d AND map_id=%d AND difficulty=%d",
+            member.low, handoff.mapId, handoff.level))
+        if trackedRuns[member.low] == handoff.run and handoff.run.state == "pending" then
+            trackedRuns[member.low] = nil
+        end
+        local p = GetPlayerByGUID(member.guid)
+        if p then AIO.Handle(p, "DungeonChallenge", "Error", message) end
+    end
+end
+
+local function SameParty(handoff, players)
+    local group = players[1]:GetGroup()
+    if not handoff.groupGuid then return #players == 1 and not group end
+    if not group or group:GetGUID() ~= handoff.groupGuid
+        or not group:IsLeader(handoff.members[1].guid)
+        or group:GetMembersCount() ~= #handoff.members then return false end
+    for _, p in ipairs(players) do
+        local current = p:GetGroup()
+        if not current or current:GetGUID() ~= handoff.groupGuid then return false end
+    end
+    return true
+end
+
+-- Map change runs inside the worldport ACK stack. It only marks readiness here;
+-- the next world update resolves fresh players and starts at most one next phase.
+RegisterPlayerEvent(28, function(event, player)
+    local h = startingPlayers[player:GetGUIDLow()]
+    if not h then return end
+    if h.phase == "outside" and player:GetMapId() ~= h.mapId then
+        h.outside[player:GetGUIDLow()] = true
+    elseif h.phase == "leader" and player:GetGUIDLow() == h.leaderLow
+        and player:GetMapId() == h.mapId then
+        h.leaderEntered = true
+    end
+end)
+
+RegisterPlayerEvent(4, function(event, player) -- logout cancels; never retry on reconnect
+    local h = startingPlayers[player:GetGUIDLow()]
+    if h then CancelStart(h, "Start cancelled because a participant logged out.") end
+end)
+
+RegisterServerEvent(13, function(event, diff)
+    local requests = {}
+    for _, h in pairs(startHandoffs) do table.insert(requests, h) end
+    for _, h in ipairs(requests) do
+        if startHandoffs[h.leaderLow] == h then
+            if os.time() >= h.deadline then
+                CancelStart(h, "Start cancelled: map acknowledgement timed out.")
+            else
+                local players = {}
+                for _, member in ipairs(h.members) do
+                    local p = GetPlayerByGUID(member.guid)
+                    if not p then break end -- normal far teleport is not in-world until ACK
+                    table.insert(players, p)
+                end
+                if #players == #h.members then
+                    local alive = true
+                    for _, p in ipairs(players) do if not p:IsAlive() then alive = false end end
+                    if not alive then
+                        CancelStart(h, "Start cancelled because a participant died.")
+                    elseif not SameParty(h, players) then
+                        CancelStart(h, "Start cancelled because the party changed.")
+                    elseif h.phase == "outside" then
+                        local ready = true
+                        for i, p in ipairs(players) do
+                            if p:GetMapId() == h.mapId or not h.outside[h.members[i].low] then ready = false end
+                        end
+                        if ready then
+                            h.phase = "leader"
+                            if not players[1]:Teleport(h.mapId, h.dungeon.entranceX, h.dungeon.entranceY,
+                                h.dungeon.entranceZ, h.dungeon.entranceO) then
+                                CancelStart(h, "The leader could not enter a fresh challenge instance.")
+                            end
+                        end
+                    elseif h.phase == "leader" and h.leaderEntered then
+                        -- Leader ACK establishes the authoritative group destination
+                        -- bind before any other member is admitted. No fixed ACK sleep.
+                        if players[1]:GetMapId() ~= h.mapId
+                            or players[1]:GetInstanceId() == h.members[1].oldInstance then
+                            CancelStart(h, "The leader did not reach a fresh challenge instance.")
+                        else
+                            h.phase = "members"
+                            for i = 2, #players do
+                                if not players[i]:Teleport(h.mapId, h.dungeon.entranceX, h.dungeon.entranceY,
+                                    h.dungeon.entranceZ, h.dungeon.entranceO) then
+                                    CancelStart(h, "A participant could not enter the leader's instance.")
+                                    break
+                                end
+                            end
+                        end
+                    elseif h.phase == "members" then
+                        local ready = players[1]:GetMapId() == h.mapId
+                        local instanceId = players[1]:GetInstanceId()
+                        for _, p in ipairs(players) do
+                            if p:GetMapId() ~= h.mapId or p:GetInstanceId() ~= instanceId then ready = false end
+                        end
+                        if ready then
+                            startHandoffs[h.leaderLow] = nil
+                            for _, member in ipairs(h.members) do startingPlayers[member.low] = nil end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
 ServerHandlers.StartChallenge = function(player, mapId, difficulty)
     if not mapId or not difficulty then return end
     if type(mapId) ~= "number" or type(difficulty) ~= "number" then return end
-    if difficulty < 1 or difficulty > CONFIG.MAX_DIFFICULTY then
+    if mapId % 1 ~= 0 or difficulty % 1 ~= 0 or difficulty < 1 or difficulty > CONFIG.MAX_DIFFICULTY then
         AIO.Handle(player, "DungeonChallenge", "Error", "Invalid difficulty level!")
         return
     end
@@ -294,50 +410,51 @@ ServerHandlers.StartChallenge = function(player, mapId, difficulty)
             "Maximum of 5 players allowed!")
         return
     end
-
-    -- Note: Heroic difficulty is set by the C++ OnPlayerBeforeTeleport hook,
-    -- which reads the pending rows written below — BEFORE the port resolves,
-    -- so the first entry already creates a heroic instance.
-
-    -- Store pending challenge in DB (read by C++ OnPlayerBeforeTeleport and
-    -- OnPlayerMapChanged). CharDBQuery instead of CharDBExecute: the write
-    -- must be committed synchronously before Teleport fires the C++ hook.
-    local guid = player:GetGUIDLow()
-    CharDBQuery(string.format(
-        "REPLACE INTO `dungeon_challenge_pending` "
-        .. "(`player_guid`, `map_id`, `difficulty`) VALUES (%d, %d, %d)",
-        guid, mapId, difficulty))
-
-    -- Announce, unbind instances, and teleport
+    if group and not group:IsLeader(player:GetGUID()) then
+        AIO.Handle(player, "DungeonChallenge", "Error", "Only the group leader can start a challenge.")
+        return
+    end
+    local members = { player } -- leader first; remaining entry waits for its ACK
     if group then
-        local members = group:GetMembers()
-        for _, member in ipairs(members) do
-            -- Store pending for each group member (synchronous, see above)
-            CharDBQuery(string.format(
-                "REPLACE INTO `dungeon_challenge_pending` "
-                .. "(`player_guid`, `map_id`, `difficulty`) VALUES (%d, %d, %d)",
-                member:GetGUIDLow(), mapId, difficulty))
-
-            AIO.Handle(member, "DungeonChallenge", "ChallengeStarted",
-                dungeon.name, difficulty, player:GetName())
-
-            -- Clear all instance lockouts before teleporting
-            member:UnbindAllInstances()
-
-            member:Teleport(mapId,
-                dungeon.entranceX, dungeon.entranceY,
-                dungeon.entranceZ, dungeon.entranceO)
+        for _, member in ipairs(group:GetMembers()) do
+            if member:GetGUIDLow() ~= player:GetGUIDLow() then table.insert(members, member) end
         end
-    else
-        AIO.Handle(player, "DungeonChallenge", "ChallengeStarted",
-            dungeon.name, difficulty, player:GetName())
-
-        -- Clear all instance lockouts before teleporting
-        player:UnbindAllInstances()
-
-        player:Teleport(mapId,
-            dungeon.entranceX, dungeon.entranceY,
-            dungeon.entranceZ, dungeon.entranceO)
+        if #members ~= group:GetMembersCount() then
+            AIO.Handle(player, "DungeonChallenge", "Error", "All participants must be online.")
+            return
+        end
+    end
+    local guid = player:GetGUIDLow()
+    local h = { leaderLow = guid, groupGuid = group and group:GetGUID(), members = {}, outside = {},
+        mapId = mapId, level = difficulty, dungeon = dungeon, phase = "outside", deadline = os.time() + 30 }
+    local frozen = {}
+    for _, member in ipairs(members) do frozen[member:GetGUIDLow()] = true end
+    for _, member in ipairs(members) do
+        local low = member:GetGUIDLow()
+        local previous = trackedRuns[low]
+        if startingPlayers[low] or not member:IsAlive() or member:IsInCombat()
+            or (previous and (previous.state == "running" or previous.state == "pending"))
+            or CharDBQuery(string.format("SELECT player_guid FROM dungeon_challenge_pending WHERE player_guid=%d", low)) then
+            AIO.Handle(player, "DungeonChallenge", "Error", "A participant is not ready for a new run.")
+            return
+        end
+        local home = member:GetHomebind()
+        if member:GetMapId() == mapId then
+            local outsideMap = GetMapById(home.mapId, 0)
+            if home.mapId == mapId or not outsideMap or outsideMap:IsDungeon() then
+                AIO.Handle(player, "DungeonChallenge", "Error", "No safe outside destination is available.")
+                return
+            end
+            for _, occupant in pairs(member:GetMap():GetPlayers()) do
+                if not frozen[occupant:GetGUIDLow()] then
+                    AIO.Handle(player, "DungeonChallenge", "Error", "Other players still occupy the old instance.")
+                    return
+                end
+            end
+        else
+            h.outside[low] = true
+        end
+        table.insert(h.members, { guid = member:GetGUID(), low = low, home = home, oldInstance = member:GetInstanceId() })
     end
 
     -- Track run for active UI
@@ -391,6 +508,33 @@ ServerHandlers.StartChallenge = function(player, mapId, difficulty)
     else
         trackedRuns[guid] = runTrack
         capturePersonalBest(player)
+    end
+    h.run = runTrack
+    startHandoffs[guid] = h
+    for _, member in ipairs(h.members) do
+        startingPlayers[member.low] = h
+        -- Existing synchronous pending is also the C++ pre-departure intent
+        -- guard for NPC/native runs which have no Lua tracker. It is consumed
+        -- only on target entry; cancellation removes its matching owned row.
+        CharDBQuery(string.format(
+            "INSERT INTO dungeon_challenge_pending (player_guid,map_id,difficulty) VALUES (%d,%d,%d)",
+            member.low, mapId, difficulty))
+        local intent = CharDBQuery(string.format(
+            "SELECT map_id,difficulty FROM dungeon_challenge_pending WHERE player_guid=%d", member.low))
+        if not intent or intent:GetUInt32(0) ~= mapId or intent:GetUInt32(1) ~= difficulty then
+            CancelStart(h, "The Start request could not be recorded. No teleport was attempted.")
+            return
+        end
+    end
+    for i, member in ipairs(members) do
+        AIO.Handle(member, "DungeonChallenge", "ChallengeStarted", dungeon.name, difficulty, player:GetName())
+        if member:GetMapId() == mapId then
+            local home = h.members[i].home
+            if not member:Teleport(home.mapId, home.x, home.y, home.z, 0) then
+                CancelStart(h, "The old run is active or its instance cannot be left safely.")
+                return
+            end
+        end
     end
 end
 
