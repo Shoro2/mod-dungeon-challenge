@@ -1,5 +1,10 @@
 # mod-dungeon-challenge — open items
 
+## Snapshot / lifecycle qualification
+
+- **(high)** Run the coordinator-granted apostrophe/plain-name snapshot row proof for the isolated name-escaping candidate; asynchronous queue logging is not a persistence receipt.
+- **(high)** Define the interrupted-run contract before implementing restart recovery. Current snapshots are records, not a resumable run checkpoint; same-map StartChallenge re-entry remains unreproduced.
+
 ## Display
 
 ### Lua affix percentage is hardcoded and drifted

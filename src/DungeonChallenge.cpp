@@ -812,11 +812,15 @@ void DungeonChallengeMgr::SaveBossKillSnapshot(ChallengeRun const* run, Creature
     if (!run || !boss)
         return;
 
+    std::string bossName = boss->GetName();
+    CharacterDatabase.EscapeString(bossName);
+
     // Save one snapshot row per participant
     for (auto const& guid : run->participants)
     {
         Player* player = ObjectAccessor::FindPlayer(guid);
         std::string playerName = player ? player->GetName() : "Unknown";
+        CharacterDatabase.EscapeString(playerName);
         uint32 playerGuidVal = guid.GetCounter();
 
         CharacterDatabase.Execute(
@@ -826,14 +830,14 @@ void DungeonChallengeMgr::SaveBossKillSnapshot(ChallengeRun const* run, Creature
             "`player_name`, `player_guid`) VALUES ({}, {}, {}, {}, {}, {}, {}, '{}', {}, {}, {}, {}, '{}', {})",
             run->instanceId, run->mapId, run->difficulty, run->startTime,
             run->elapsedTime, run->timerDuration,
-            boss->GetEntry(), boss->GetName(),
+            boss->GetEntry(), bossName,
             isFinalBoss ? 1 : 0, rewarded ? 1 : 0,
             run->deathCount, run->penaltyTime,
             playerName, playerGuidVal);
     }
 
-    LOG_INFO("module", ">> mod-dungeon-challenge: Saved boss kill snapshot for {} (entry: {}, final: {})",
-        boss->GetName(), boss->GetEntry(), isFinalBoss ? "yes" : "no");
+    LOG_INFO("module", ">> mod-dungeon-challenge: Queued boss kill snapshots for {} (entry: {}, final: {}, participants: {})",
+        boss->GetName(), boss->GetEntry(), isFinalBoss ? "yes" : "no", run->participants.size());
 }
 
 std::vector<BossKillSnapshot> DungeonChallengeMgr::GetSnapshotsForDungeon(uint32 mapId, uint32 difficulty, uint32 limit) const
