@@ -152,7 +152,7 @@ public:
         auto refuse = [&]()
         {
             ChatHandler(player->GetSession()).SendSysMessage(
-                "|cffff0000[Dungeon Challenge]|r Cannot start while the old run or instance is still occupied. Finish it first.");
+                "|cffff0000[Dungeon Challenge]|r A running or occupied instance, or a permanent raid lockout, prevents a fresh start.");
             return false;
         };
         if (intent)
@@ -214,15 +214,30 @@ public:
         {
             Difficulty const mode = isRaidMap ? Difficulty(info->raidDifficulty)
                 : (hasHeroic ? DUNGEON_DIFFICULTY_HEROIC : DUNGEON_DIFFICULTY_NORMAL);
+            // GetBound normalizes shared/downscaled modes; Unbind indexes its
+            // argument directly. Resolve the same real storage key once.
+            Difficulty bindMode = IsSharedDifficultyMap(mapid) ? Difficulty(mode % 2) : mode;
+            if (!GetDownscaledMapDifficultyData(mapid, bindMode))
+                return refuse();
+            auto bound = [&](Player* member) -> InstancePlayerBind const*
+            {
+                BoundInstancesMap const& binds = sInstanceSaveMgr->PlayerGetBoundInstances(member->GetGUID(), bindMode);
+                auto const it = binds.find(mapid);
+                return it == binds.end() ? nullptr : &it->second;
+            };
             auto canUnbind = [&](Player* member)
             {
                 if (!member || (member->GetMapId() == mapid
                     && (!matchingJoin || member->GetInstanceId() != joining->instanceId)))
                     return false;
-                if (InstancePlayerBind* bind = sInstanceSaveMgr->PlayerGetBoundInstance(member->GetGUID(), mapid, mode))
+                if (InstancePlayerBind const* bind = bound(member))
                 {
                     if (matchingJoin && bind->save->GetInstanceId() == joining->instanceId)
                         return true;
+                    // A Start click carries no consent to discard a weekly
+                    // raid lockout, including shared normal/heroic slots.
+                    if (isRaidMap && bind->perm)
+                        return false;
                     if (ChallengeRun* old = sDungeonChallengeMgr->GetChallengeRun(bind->save->GetInstanceId()))
                         if (old->state == CHALLENGE_STATE_RUNNING || old->state == CHALLENGE_STATE_PREPARING
                             || old->state == CHALLENGE_STATE_COUNTDOWN)
@@ -243,13 +258,13 @@ public:
                         return refuse();
             // Only the actual destination mode. Never drop a leader's fresh
             // binding while admitting the remaining frozen participants.
-            if (!matchingJoin)
-                sInstanceSaveMgr->PlayerUnbindInstance(leader->GetGUID(), mapid, mode, true, leader);
+            if (!matchingJoin && bound(leader))
+                sInstanceSaveMgr->PlayerUnbindInstance(leader->GetGUID(), mapid, bindMode, true, leader);
             if (player != leader)
             {
-                InstancePlayerBind* own = sInstanceSaveMgr->PlayerGetBoundInstance(player->GetGUID(), mapid, mode);
+                InstancePlayerBind const* own = bound(player);
                 if (own && (!matchingJoin || own->save->GetInstanceId() != joining->instanceId))
-                    sInstanceSaveMgr->PlayerUnbindInstance(player->GetGUID(), mapid, mode, true, player);
+                    sInstanceSaveMgr->PlayerUnbindInstance(player->GetGUID(), mapid, bindMode, true, player);
             }
         }
 

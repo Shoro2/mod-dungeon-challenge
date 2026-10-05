@@ -476,7 +476,7 @@ ServerHandlers.StartChallenge = function(player, mapId, difficulty)
         personalBest = {},   -- [guidLow] = pre-run personal best seconds (or nil)
         globalBest = nil,    -- pre-run global best seconds (or nil)
         exitDest = {},       -- [guidLow] = { map, x, y, z } home destination from the C++ signal
-        exited = {},         -- [guidLow] = true once the player has been teleported out
+        exited = {},         -- [guidLow] = true once the exit teleport is accepted
     }
 
     -- Capture pre-run bests so the summary delta is not polluted by the run we are
@@ -608,15 +608,17 @@ ServerHandlers.RequestRunEnd = function(player)
 end
 
 -- "Leave" button on the summary, and the client's auto-leave when the countdown
--- reaches 0: teleport the player to their hearthstone/home and reset their bind.
+-- reaches 0: teleport the player home; binds are preserved until a fresh Start.
 ServerHandlers.RequestLeave = function(player)
     local g = player:GetGUIDLow()
     local run = trackedRuns[g]
     if not run or not run.exitDest[g] or run.exited[g] then return end
-    run.exited[g] = true
     local d = run.exitDest[g]
-    player:Teleport(d.map, d.x, d.y, d.z, 0)
-    player:UnbindAllInstances()
+    if player:Teleport(d.map, d.x, d.y, d.z, 0) then
+        run.exited[g] = true -- Accepted request; actual map ACK remains authoritative.
+    else
+        AIO.Handle(player, "DungeonChallenge", "Error", "Could not leave the challenge instance.")
+    end
 end
 
 AIO.AddHandlers("DungeonChallenge", ServerHandlers)

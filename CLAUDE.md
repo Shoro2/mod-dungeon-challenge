@@ -10,8 +10,14 @@ freezes an online solo/leader-owned party, refuses old running/occupied copies,
 leaves the selected map first and waits for actual map acknowledgements. World
 update admits the leader first, then matching members after the leader ACK. C++
 unbinds only the destination's real dungeon/raid mode and joins an existing
-matching run without Create/Start/affix reassignment. Other maps/modes and stored
+matching run without Create/Start/affix reassignment. Other maps/storage keys and stored
 snapshot/history/reward rows are untouched; there is no checkpoint resume.
+The actual storage key follows core GetBound's shared `%2`/downscale normalization;
+direct Unbind is called only for a present slot with that key. Selected non-raid
+permanent binds are intentionally released for the new attempt; a permanent raid
+bind is refused unless it is already the matching new run. This preserves weekly
+lockouts, including shared normal/heroic slots. Restarting such a locked raid is
+not accepted by this candidate; other distinct mode slots remain intact.
 
 The existing synchronous pending row is recorded/read back BEFORE departure so
 C++ can identify this Start and refuse active NPC/native runs missing Lua tracking.
@@ -26,6 +32,12 @@ UnbindAllInstances can delete sole-owner unloaded old saves. CRTEST2/1431/2448
 Chronolock is an existing level80 normal-mode actor with no binds or GM/RBAC rows;
 no existing heroic actor was found. Auth age7 remains source-unqualified/updater1.
 Compiler, runtime, client, Auth, deployment and group acceptance are all pending.
+Ordinary summary/automatic Leave preserves every bind and marks leaving only when
+Teleport accepts; a far-teleport ACK is still the actual exit proof. Refused exits
+report an error without marking success. Source-only selected-HEROIC test planning
+requires a fresh empty-memory-bind proof before ordinary mode choice/own fixtures;
+no mode, reset or cleanup action has been granted. Auth startup also needs a
+qualified no-transition SecretMgr/TOTP path in addition to updater/realm guards.
 Deployed Hell Touched description drift is preserved; do not deploy this whole
 source Lua blindly. The accepted snapshot4112 product is unchanged.
 
