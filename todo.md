@@ -2,8 +2,8 @@
 
 ## Snapshot / lifecycle qualification
 
-- **(high)** Run the coordinator-granted apostrophe/plain-name snapshot row proof for the isolated name-escaping candidate; asynchronous queue logging is not a persistence receipt.
-- **(high)** Define the interrupted-run contract before implementing restart recovery. Current snapshots are records, not a resumable run checkpoint; same-map StartChallenge re-entry remains unreproduced.
+- **(high)** Coordinator-reviewed publication and later approved joint host rollout of snapshot4112/MIG081; local native348 and exact owned cleanup are accepted. Retain the disclosed empty unbound instance8 normal-unload residual.
+- **(high)** Implement and qualify the separate fresh-re-entry contract: interrupted old run ends; a real Lua/AIO Start must enter a fresh instance, clear only selected map/difficulty bindings, preserve unrelated binds/old records/rewards, and handle the group leader without forcing remaining participants. Current same-map Start seam is source-confirmed but not yet runtime-reproduced; no checkpoint resume.
 
 ## Display
 

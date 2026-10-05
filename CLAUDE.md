@@ -308,7 +308,40 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 3. **Timer UI**: Active run tracker frame implemented via AIO (TrackerFrame). Shows timer, boss progress, deaths, affixes, +2/+3 thresholds. Toggle with `/dc tracker`. The top-center mob counter HUD (DCCounterFrame) toggles with `/dc counters`
 4. **Prepared Statements**: Currently format-string-based queries → should use prepared statements
 5. **Creature Scaling**: `GetCreatureBySpawnIdStore()` must be verified against correct API
-6. **Instance Reset**: On run end the participants are returned to their home bind and unbound (`UnbindAllInstances`), so the emptied instance unloads and the next run is fresh. A C++ safety fallback (`FallbackSeconds`) also returns/reset stragglers if the client add-on is missing.
+6. **Run-end leave / interrupted retry**: Current run-end paths return participants home and use broad `UnbindAllInstances`; the C++ summary fallback covers stragglers. This does not prove fresh re-entry after an interruption: Lua tracking is process-local, RequestLeave needs a tracked exit destination, and same-map Start uses a near teleport. The accepted interruption contract is old run ended plus a fresh instance; selected-map/difficulty-only retry remains a separate unimplemented feature.
 7. **Snapshot Reload**: Snapshots are loaded at startup but not periodically refreshed
 8. **Lua CONFIG sync**: Config values are sent to client via AIO.AddOnInit on login (server-side config is authoritative)
 9. **AIO Dependency**: Requires AIO framework (AIO.lua + dependencies) in server `lua_scripts/` folder
+
+
+## Snapshot qualification (2026-10-05, isolated candidate4112)
+
+Exact boss/player-name escaping was locally accepted: full TU MSVC syntax, direct
+native MySQL utf8mb4 four-case quote/plain proof, incremental linked worldserver,
+guarded install/start, and one actual native PlayerKill of Xon'ta80205. Existing
+solo test director TBOT00/account1434/GUID2451 only; native348 PASS7/0 in fresh
+744 heroic instance8. Exactly one committed snapshot1 matched all14 source fields
+and exact names, Queued participants1 once, Errors tail0, samePID35752/8085.
+No client Start-button/fresh-re-entry, full dungeon/final boss or host crash closure
+was tested. The quote/plain player controls used direct native API synthetic names.
+
+All59 own Character/account/Paragon image tables, seven hashed Auth tables, DC and
+updater data match the fresh baseline after precise owned cleanup. Original native
+cleanup FAIL remains retained: headless login sets Auth.online but its destructor
+skips the offline reset. A separate granted cleanup restored ONLY own account1434
+online1->0 using full current account-column hash predicates/affected_rows1 and
+removed the byte-matched scenario. Exactly one new empty unbound744 instance8
+remains for the normal1800000ms unload; all137 old instances/other67protected
+controls exact. No manual instance delete/reset/unload; no full instance equality
+claim while that residual exists. All four cleanup leases released.
+
+Retained pre-enqueue timestamp-log mistake and pre-write nonexistent group_instance
+SELECT each caused zero writes in their failed phases. Actual core uses leader
+player binds; no group_instance exists. Corrected continuations use distinct fresh
+receipts, never a second gameplay enqueue. Source snapshot4112 product diff stays
+unchanged; these are isolated documentation updates, not canonical fleet changes.
+
+Durable sanitized evidence and source-qualified separate re-entry scope live in the
+share-public vault under forgotten-land/runbooks/2026-10-05-dc-snapshot-restore-review.md.
+Source publication, root vault integration and MIG081 host window belong to the
+coordinator. No production deploy or lifecycle implementation is implied.
