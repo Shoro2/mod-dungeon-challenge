@@ -7,7 +7,7 @@ name    mod-dungeon-challenge: boss adds, health auras, entry changes and mob he
 #      used to rebuild the maximum from the unscaled UNIT_MOD_HEALTH. The maximum must stay > 8000.
 #      An entry change (`.npc set entry`, the core's UpdateEntry -> SelectLevel, as a boss phase change) on a
 #      Dragonflayer Runecaster (heroic 31663: 63000-65165 unscaled, >= 151200 scaled) must be re-scaled: > 120000.
-#   3. mob heals: the skeleton drinks a Super Healing Potion on itself (`.cast self`, 28495: 1500-2500, no crit:
+#   3. mob heals: the skeleton drinks a Super Healing Potion on itself (`.cast self`, 28495: 1500-2500, untriggered - the triggered cast heals nothing here; no crit:
 #      damage class none) after `.damage 9500` left it at 1019-1363. Scaled x2.4 the heal is 3600-6000, so its
 #      health ends above 4619; unscaled it would end below 3863 - the check is > 4200.
 # The run is started through the Dungeon Challenge NPC (500000) in Azealia, which also proves its difficulty
@@ -55,7 +55,7 @@ expect skel maxhealth > 8000
 log 3 - a mob heal on a scaled mob is scaled
 as gm .damage 9500
 expect skel health < 1500
-as gm .cast self 28495 triggered
+as gm .cast self 28495
 wait 1s
 expect skel health > 4200
 
