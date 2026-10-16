@@ -233,7 +233,13 @@ private:
 
         uint32 maxDiff = sDungeonChallengeMgr->GetMaxDifficulty();
 
-        for (uint32 d = 1; d <= maxDiff; ++d)
+        // A gossip menu holds at most GOSSIP_MAX_MENU_ITEMS (32) options and the
+        // core ASSERTs past that (GossipDef.cpp:44): listing all 100 levels
+        // crashed the worldserver. Above 30 levels the list steps - level 1,
+        // then every `stride`-th level - so it stays at 31 levels plus "Back".
+        // The stone's Lua UI still offers every level.
+        uint32 const stride = std::max(1u, (maxDiff + 29) / 30);
+        for (uint32 d = 1; d <= maxDiff; d = (d == 1 && stride > 1) ? stride : d + stride)
         {
             float hpMult = sDungeonChallengeMgr->GetHealthMultiplier(d);
             float dmgMult = sDungeonChallengeMgr->GetDamageMultiplier(d);

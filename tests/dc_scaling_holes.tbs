@@ -1,0 +1,79 @@
+name    mod-dungeon-challenge: boss adds, health auras, entry changes and mob heals keep the run's scaling
+# Server-side test bot run (mod-fl-testbots), T1. The three scaling holes of the Mythic+ survey (2026-10-10 §4), in
+# Utgarde Keep (heroic) at challenge level 28 (health x2.4, damage x1.56 with the workbench's 5 % / 2 % per level):
+#   1. boss adds: Prince Keleseth (23953) summons five Vrykul Skeletons (23970) 4 s into the fight. A skeleton is
+#      4383-4534 health unscaled (heroic 31635, level 80-81) and 10519-10882 scaled - the check is > 8000.
+#   2. health auras: Commanding Shout (469, +health) on a scaled skeleton runs Creature::UpdateMaxHealth, which
+#      used to rebuild the maximum from the unscaled UNIT_MOD_HEALTH. The maximum must stay > 8000.
+#      An entry change (`.npc set entry`, the core's UpdateEntry -> SelectLevel, as a boss phase change) on a
+#      Dragonflayer Runecaster (heroic 31663: 63000-65165 unscaled, >= 151200 scaled) must be re-scaled: > 120000.
+#   3. mob heals: the skeleton drinks a Super Healing Potion on itself (`.cast self`, 28495: 1500-2500, no crit:
+#      damage class none) after `.damage 9500` left it at 1019-1363. Scaled x2.4 the heal is 3600-6000, so its
+#      health ends above 4619; unscaled it would end below 3863 - the check is > 4200.
+# The run is started through the Dungeon Challenge NPC (500000) in Azealia, which also proves its difficulty
+# menu no longer lists 100 levels (the core ASSERTs past 32 gossip options): level 28 is option 7 of
+# 1, 4, 8, ..., 100. The director pulls Keleseth in `.cheat god`; bot a only starts the run and stays at the
+# entrance.
+timeout 240s
+
+bot a warrior
+group party
+
+place 727 13288.5 11776.2 -31.5
+require a alive
+pick stone creature:500000 near a
+require stone exists
+do a approach stone
+do a gossip stone
+expect output has "Start Dungeon Challenge"
+do a select 0
+expect output has "Utgarde Keep"
+do a select 0
+expect output has "Level 28"
+expect output lacks "Level 27"
+do a select 7
+do a select 0
+waitfor a map 574 timeout 20s
+waitfor gm map 574 timeout 20s
+wait 2s
+
+log 1 - boss adds are scaled
+as gm .cheat god on
+pick kel creature:23953 near gm
+require kel exists
+do gm goto 183.0 199.0 40.9
+do gm approach kel
+do gm attack kel
+waitfor kel incombat timeout 10s
+wait 7s
+pick skel creature:23970 near gm
+require skel exists
+do gm target skel
+as gm .npc info
+expect skel maxhealth > 8000
+
+log 3 - a mob heal on a scaled mob is scaled
+as gm .damage 9500
+expect skel health < 1500
+as gm .cast self 28495 triggered
+wait 1s
+expect skel health > 4200
+
+log 2 - a health aura keeps the scaled maximum
+as gm .aura 469
+wait 1s
+expect skel aura 469
+expect skel maxhealth > 8000
+
+log 2b - an entry change is re-scaled
+pick rc creature:23960 near gm
+require rc exists
+expect rc maxhealth > 120000
+do gm target rc
+as gm .npc set entry 23960
+wait 2s
+expect rc maxhealth > 120000
+
+cleanup
+as gm .cheat god off
+place 727 13288.5 11776.2 -31.5
