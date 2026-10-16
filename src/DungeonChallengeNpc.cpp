@@ -28,7 +28,19 @@ enum DungeonChallengeGossip
     GOSSIP_DIFFICULTY_OFFSET        = 3000,
     GOSSIP_LEADERBOARD_OFFSET       = 4000,
     GOSSIP_SNAPSHOT_OFFSET          = 5000,
+
+    // Page of a dungeon list: offset + page number
+    GOSSIP_DUNGEON_PAGE_OFFSET      = 6000,
+    GOSSIP_LEADERBOARD_PAGE_OFFSET  = 6100,
+    GOSSIP_SNAPSHOT_PAGE_OFFSET     = 6200,
+    GOSSIP_PAGE_OFFSET_END          = 6300,
 };
+
+// A gossip menu holds at most GOSSIP_MAX_MENU_ITEMS (32) options and the core
+// ASSERTs past that (GossipDef.cpp). The dungeon lists grow with every dungeon
+// and delve, so they page: this many dungeons per page, plus up to three
+// navigation options.
+constexpr uint32 DUNGEONS_PER_PAGE = 20;
 
 // ============================================================================
 // Player Selection State (temporary, per-session)
@@ -70,6 +82,18 @@ public:
     {
         player->PlayerTalkClass->ClearMenus();
 
+        // A page of one of the dungeon lists
+        if (action >= GOSSIP_DUNGEON_PAGE_OFFSET && action < GOSSIP_PAGE_OFFSET_END)
+        {
+            if (action >= GOSSIP_SNAPSHOT_PAGE_OFFSET)
+                ShowSnapshotMenu(player, creature, action - GOSSIP_SNAPSHOT_PAGE_OFFSET);
+            else if (action >= GOSSIP_LEADERBOARD_PAGE_OFFSET)
+                ShowLeaderboardMenu(player, creature, action - GOSSIP_LEADERBOARD_PAGE_OFFSET);
+            else
+                ShowDungeonMenu(player, creature, action - GOSSIP_DUNGEON_PAGE_OFFSET);
+            return true;
+        }
+
         // Dungeon Selection
         if (action >= GOSSIP_DUNGEON_OFFSET && action < GOSSIP_DIFFICULTY_OFFSET)
         {
@@ -107,7 +131,7 @@ public:
         }
 
         // Snapshot Dungeon Selection
-        if (action >= GOSSIP_SNAPSHOT_OFFSET)
+        if (action >= GOSSIP_SNAPSHOT_OFFSET && action < GOSSIP_DUNGEON_PAGE_OFFSET)
         {
             uint32 dungeonIndex = action - GOSSIP_SNAPSHOT_OFFSET;
             auto const& dungeons = sDungeonChallengeMgr->GetAllDungeons();
@@ -202,12 +226,32 @@ private:
         SendGossipMenuFor(player, creature->GetEntry(), creature->GetGUID());
     }
 
-    void ShowDungeonMenu(Player* player, Creature* creature)
+    // The [first, last) dungeon indexes of a page, clamped to the last page.
+    static std::pair<uint32, uint32> PageRange(uint32& page)
+    {
+        uint32 count = uint32(sDungeonChallengeMgr->GetAllDungeons().size());
+        uint32 pages = std::max(1u, (count + DUNGEONS_PER_PAGE - 1) / DUNGEONS_PER_PAGE);
+        page = std::min(page, pages - 1);
+        uint32 first = page * DUNGEONS_PER_PAGE;
+        return { first, std::min(count, first + DUNGEONS_PER_PAGE) };
+    }
+
+    // "Previous page" / "Next page" options of a paged dungeon list.
+    static void AddPageOptions(Player* player, uint32 sender, uint32 pageOffset, uint32 page, uint32 last)
+    {
+        if (page > 0)
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "<< Previous page", sender, pageOffset + page - 1);
+        if (last < sDungeonChallengeMgr->GetAllDungeons().size())
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Next page >>", sender, pageOffset + page + 1);
+    }
+
+    void ShowDungeonMenu(Player* player, Creature* creature, uint32 page = 0)
     {
         player->PlayerTalkClass->ClearMenus();
 
         auto const& dungeons = sDungeonChallengeMgr->GetAllDungeons();
-        for (uint32 i = 0; i < dungeons.size(); ++i)
+        auto [first, last] = PageRange(page);
+        for (uint32 i = first; i < last; ++i)
         {
             std::string label = fmt::format("|TInterface\\Icons\\Spell_Shadow_SummonVoidwalker:20:20|t {} (Timer: {} Min)",
                 dungeons[i].name, dungeons[i].timerMinutes);
@@ -215,6 +259,7 @@ private:
                 GOSSIP_ACTION_SELECT_DUNGEON, GOSSIP_DUNGEON_OFFSET + i);
         }
 
+        AddPageOptions(player, GOSSIP_ACTION_SELECT_DUNGEON, GOSSIP_DUNGEON_PAGE_OFFSET, page, last);
         AddGossipItemFor(player, GOSSIP_ICON_CHAT, "<< Back",
             GOSSIP_ACTION_SELECT_DUNGEON, GOSSIP_ACTION_MAIN_MENU);
         SendGossipMenuFor(player, creature->GetEntry(), creature->GetGUID());
@@ -410,17 +455,19 @@ private:
     // Leaderboard
     // ========================================================================
 
-    void ShowLeaderboardMenu(Player* player, Creature* creature)
+    void ShowLeaderboardMenu(Player* player, Creature* creature, uint32 page = 0)
     {
         player->PlayerTalkClass->ClearMenus();
 
         auto const& dungeons = sDungeonChallengeMgr->GetAllDungeons();
-        for (uint32 i = 0; i < dungeons.size(); ++i)
+        auto [first, last] = PageRange(page);
+        for (uint32 i = first; i < last; ++i)
         {
             AddGossipItemFor(player, GOSSIP_ICON_TABARD, dungeons[i].name,
                 GOSSIP_ACTION_LEADERBOARD, GOSSIP_LEADERBOARD_OFFSET + i);
         }
 
+        AddPageOptions(player, GOSSIP_ACTION_LEADERBOARD, GOSSIP_LEADERBOARD_PAGE_OFFSET, page, last);
         AddGossipItemFor(player, GOSSIP_ICON_CHAT, "<< Back",
             GOSSIP_ACTION_LEADERBOARD, GOSSIP_ACTION_MAIN_MENU);
         SendGossipMenuFor(player, creature->GetEntry(), creature->GetGUID());
@@ -496,17 +543,19 @@ private:
     // Snapshots (Boss Kill Records)
     // ========================================================================
 
-    void ShowSnapshotMenu(Player* player, Creature* creature)
+    void ShowSnapshotMenu(Player* player, Creature* creature, uint32 page = 0)
     {
         player->PlayerTalkClass->ClearMenus();
 
         auto const& dungeons = sDungeonChallengeMgr->GetAllDungeons();
-        for (uint32 i = 0; i < dungeons.size(); ++i)
+        auto [first, last] = PageRange(page);
+        for (uint32 i = first; i < last; ++i)
         {
             AddGossipItemFor(player, GOSSIP_ICON_INTERACT_1, dungeons[i].name,
                 GOSSIP_ACTION_SNAPSHOTS, GOSSIP_SNAPSHOT_OFFSET + i);
         }
 
+        AddPageOptions(player, GOSSIP_ACTION_SNAPSHOTS, GOSSIP_SNAPSHOT_PAGE_OFFSET, page, last);
         AddGossipItemFor(player, GOSSIP_ICON_CHAT, "<< Back",
             GOSSIP_ACTION_SNAPSHOTS, GOSSIP_ACTION_MAIN_MENU);
         SendGossipMenuFor(player, creature->GetEntry(), creature->GetGUID());

@@ -1,0 +1,50 @@
+name    mod-dungeon-challenge: the NPC's dungeon lists page instead of passing the gossip limit
+# Server-side test bot run (mod-fl-testbots), T1. A gossip menu holds at most 32 options and the core ASSERTs past
+# that (a worldserver crash). The Dungeon Challenge NPC (500000) listed every enabled dungeon in one menu: 25 today,
+# 35 once the 10 delves are added. The lists now show 20 dungeons per page with "Next page >>" / "<< Previous page".
+# Dungeons are listed by map id; the last one today, FL: Yelma (748), is on page 2, Utgarde Keep (574) on page 1.
+timeout 120s
+
+bot a warrior
+group party
+
+place 727 13288.5 11776.2 -31.5
+require a alive
+pick stone creature:500000 near a
+require stone exists
+do a approach stone
+
+log 1 - the start list: page 1 holds 20 dungeons and a next-page option
+do a gossip stone
+expect output has "Start Dungeon Challenge"
+do a select 0
+expect output has "Utgarde Keep"
+expect output has "Next page >>"
+expect output lacks "FL: Yelma"
+expect output lacks "option 23:"
+
+log 2 - page 2 holds the rest and a previous-page option
+do a select 20
+expect output has "FL: Yelma"
+expect output has "<< Previous page"
+expect output lacks "Utgarde Keep"
+
+log 3 - a dungeon on page 2 opens its difficulty menu
+do a select 0
+expect output has "Level 1"
+
+log 4 - the leaderboard and records lists page the same way
+do a gossip stone
+do a select 1
+expect output has "Next page >>"
+expect output lacks "FL: Yelma"
+do a select 20
+expect output has "FL: Yelma"
+do a gossip stone
+do a select 3
+expect output has "Next page >>"
+do a select 20
+expect output has "FL: Yelma"
+
+cleanup
+place 727 13288.5 11776.2 -31.5
