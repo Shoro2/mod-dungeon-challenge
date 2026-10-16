@@ -1,6 +1,6 @@
 # Change log
 
-- 2026-10-16 - feat(Core): a completed run gives every participant still in the instance one kill credit of creature 402451 (key `DungeonChallenge.RunCredit`, 0 = off): the call board's daily "complete a run" (402451) and weekly "complete 5 runs" (402461) count it (mod-hero-call-board docs/fl-port.md section 14). T0: code written, not yet built.
+- 2026-10-16 - feat(Core): a completed run gives every participant still in the instance one kill credit of creature 402451 (key `DungeonChallenge.RunCredit`, 0 = off): the call board's daily "complete a run" (402451) and weekly "complete 5 runs" (402461) count it (mod-hero-call-board docs/fl-port.md section 14). T1 2026-10-16: built and booted on the workbench; no Dungeon Challenge run played yet (the board side is proven with `.hcb credit`).
 
 - 2026-10-05 — fix(Core): Escape boss snapshot names (this commit; isolated T0 syntax only, native row proof pending)
 
