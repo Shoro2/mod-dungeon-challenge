@@ -677,6 +677,24 @@ class DungeonChallengeCreatureScript : public AllCreatureScript
 public:
     DungeonChallengeCreatureScript() : AllCreatureScript("DungeonChallengeCreatureScript") { }
 
+    // The core rebuilt the creature's stats from its template (respawn,
+    // UpdateEntry): the scaled health is gone while `processed` was still set.
+    // Clear the flags so the next update scales it again (and re-applies its
+    // affixes). Get(), not GetDefault(): this runs for every creature that is
+    // created anywhere, and only ones the DC already touched need it.
+    void OnCreatureSelectLevel(CreatureTemplate const* /*cinfo*/, Creature* creature) override
+    {
+        auto* creatureData = creature->CustomData.Get<CreatureChallengeData>("mod-dungeon-challenge");
+        if (!creatureData || !creatureData->scaled)
+            return;
+
+        creatureData->processed = false;
+        creatureData->scaled = false;
+        creatureData->baseCreateHealth = 0;
+        if (!creatureData->affixes.empty())
+            creatureData->affixesApplied = false;
+    }
+
     void OnAllCreatureUpdate(Creature* creature, uint32 diff) override
     {
         if (!sDungeonChallengeMgr->IsEnabled())
@@ -711,7 +729,11 @@ public:
         }
 
         // --- MOB RESPAWN: non-boss, non-affix mobs respawn at original position when pulled ---
+        // Placed spawns only (spawn id != 0). A summon has no original position:
+        // without this, boss adds - and the players' own pets and guardians -
+        // were copied twice as well.
         if (creature->IsAlive() && creature->IsInCombat()
+            && creature->GetSpawnId() != 0
             && !creatureData->isRespawnCopy
             && !creatureData->combatTracked
             && creatureData->affixes.empty())
@@ -1059,13 +1081,16 @@ private:
             if (!copy)
                 continue;
 
-            copy->SetMaxHealth(copyHealth);
-            copy->SetFullHealth();
-
             auto* copyData = copy->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+            // The template's health stays the base a later re-scaling (after an
+            // evade) starts from, as it did before the split health was set.
+            copyData->baseCreateHealth = copy->GetCreateHealth();
+            DungeonChallengeMgr::SetCreatureBaseHealth(copy, copyHealth);
+
             copyData->lilBroGeneration = nextGeneration;
             copyData->affixes = parentData->affixes;
             copyData->processed = true;
+            copyData->scaled = true;
             copyData->affixesApplied = true;
 
             // Apply difficulty damage scaling
@@ -1213,6 +1238,12 @@ public:
         if (!run || run->state != CHALLENGE_STATE_RUNNING)
             return;
 
+        // The periodic HEAL tick calls this damage hook too (SpellAuraEffects.cpp,
+        // HandlePeriodicHealAurasTick). Heals are scaled in ModifyHealReceived;
+        // multiplying them here as well used to give mob HoTs the damage factor.
+        if (spellInfo && (spellInfo->HasAura(SPELL_AURA_PERIODIC_HEAL) || spellInfo->HasAura(SPELL_AURA_OBS_MOD_HEALTH)))
+            return;
+
         auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
 
         // Check for spell-specific DoT override
@@ -1229,6 +1260,40 @@ public:
         // Apply general creature damage multiplier (DoTs don't trigger Hell Touched)
         if (creatureData->extraDamageMultiplier != 1.0f)
             damage = static_cast<uint32>(damage * creatureData->extraDamageMultiplier);
+    }
+
+    // Mob heals grow with mob health: a heal sized for 1x health barely moves a
+    // mob at 16x (Mythic+ survey 2026-10-10 §4.3). Only between two scaled NPC
+    // creatures. The core's two call sites pass healer and target in opposite
+    // orders (Unit::HealBySpell vs the periodic heal tick), so the check is
+    // symmetric and the factor is the run's, not either unit's.
+    void ModifyHealReceived(Unit* target, Unit* healer, uint32& heal, SpellInfo const* /*spellInfo*/) override
+    {
+        if (!heal || !target || !healer || !sDungeonChallengeMgr->IsEnabled())
+            return;
+
+        Creature* first = target->ToCreature();
+        Creature* second = healer->ToCreature();
+        if (!first || !second)
+            return;
+
+        Map* map = first->GetMap();
+        if (!map || !map->IsDungeon() || second->GetMap() != map)
+            return;
+
+        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(map->GetInstanceId());
+        if (!run || run->state != CHALLENGE_STATE_RUNNING)
+            return;
+
+        auto* firstData = first->CustomData.Get<CreatureChallengeData>("mod-dungeon-challenge");
+        auto* secondData = second->CustomData.Get<CreatureChallengeData>("mod-dungeon-challenge");
+        if (!firstData || !secondData || !firstData->scaled || !secondData->scaled)
+            return;
+        if (first->IsCharmedOwnedByPlayerOrPlayer() || second->IsCharmedOwnedByPlayerOrPlayer())
+            return;
+
+        heal = static_cast<uint32>(std::min<double>(double(heal) * sDungeonChallengeMgr->GetHealthMultiplier(run->difficulty),
+            double(std::numeric_limits<uint32>::max())));
     }
 };
 

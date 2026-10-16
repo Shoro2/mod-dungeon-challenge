@@ -5,7 +5,10 @@
 #include "Group.h"
 #include "MapMgr.h"
 #include "GameTime.h"
+#include "TemporarySummon.h"
 
+#include <algorithm>
+#include <limits>
 #include <list>
 
 namespace
@@ -592,9 +595,13 @@ void DungeonChallengeMgr::ProcessCreature(Creature* creature, Map* map)
     if (!mapData->run || mapData->run->state != CHALLENGE_STATE_RUNNING)
         return;
 
-    // Skip critters, pets, summons, friendly mobs — don't scale them
+    // Skip critters, friendly mobs and everything on the players' side. NPC-owned
+    // summons - scripted boss adds, NPC totems - are scaled like trash: skipping
+    // every summon left boss adds at 1x while trash reached 16x HP (Mythic+ survey
+    // 2026-10-10 §4.1). The DC's own copies (respawn copies, Lil' Bro splits) are
+    // marked processed when they are created, so they never reach this point.
     if (creature->GetCreatureTemplate()->type == CREATURE_TYPE_CRITTER
-        || creature->IsPet() || creature->IsSummon() || creature->IsTotem()
+        || IsPlayerSideCreature(creature)
         || creature->GetCreatureTemplate()->faction == 35)
     {
         creatureData->processed = true;
@@ -695,8 +702,7 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
 
         case AFFIX_BIG_BOY:
             // +50% HP; size handled by DBC aura
-            creature->SetMaxHealth(static_cast<uint32>(creature->GetMaxHealth() * 1.5f));
-            creature->SetFullHealth();
+            SetCreatureBaseHealth(creature, static_cast<uint32>(creature->GetCreateHealth() * 1.5f));
             creature->CastSpell(creature, SPELL_AFFIX_BIG_BOY, true);
             break;
 
@@ -710,8 +716,7 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
 
         case AFFIX_BIGGER_BOY:
             // +50% HP; size and damage handled by DBC aura
-            creature->SetMaxHealth(static_cast<uint32>(creature->GetMaxHealth() * 1.5f));
-            creature->SetFullHealth();
+            SetCreatureBaseHealth(creature, static_cast<uint32>(creature->GetCreateHealth() * 1.5f));
             creature->CastSpell(creature, SPELL_AFFIX_BIGGER_BOY, true);
             break;
 
@@ -805,16 +810,53 @@ void DungeonChallengeMgr::ScaleCreatureForDifficulty(Creature* creature, uint32 
     auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
     if (creatureData->originalHealth == 0)
         creatureData->originalHealth = creature->GetMaxHealth();
-    creatureData->extraDamageMultiplier *= dmgMult;
+    // Unscaled create health of this life. Taken once: this function runs again
+    // after every evade of an affixed mob, and Big Boy has raised the create
+    // health by then. OnCreatureSelectLevel clears it when the core rebuilds the
+    // stats (respawn, UpdateEntry).
+    if (creatureData->baseCreateHealth == 0)
+        creatureData->baseCreateHealth = creature->GetCreateHealth();
+    // Assigned, not multiplied: a repeated call used to compound the factor
+    // (9x, 81x, ...) on every evade of an affixed mob.
+    creatureData->extraDamageMultiplier = dmgMult;
     creatureData->processed = true;
+    creatureData->scaled = true;
 
-    // Apply HP scaling directly
-    creature->SetMaxHealth(creature->GetCreateHealth() * hpMult);
-    creature->SetFullHealth();
+    // HP through the create health and UNIT_MOD_HEALTH, not SetMaxHealth alone:
+    // Creature::UpdateMaxHealth recomputes the maximum from UNIT_MOD_HEALTH on
+    // every health aura change and used to drop the mob back to 1x.
+    SetCreatureBaseHealth(creature, static_cast<uint32>(std::min<double>(
+        double(creatureData->baseCreateHealth) * hpMult, double(std::numeric_limits<uint32>::max()))));
 
     // Damage scaling is now handled via UnitScript hooks (ModifyMeleeDamage, ModifySpellDamageTaken)
     // instead of modifying base weapon damage directly.
     // The extraDamageMultiplier stored above is read by the UnitScript.
+}
+
+void DungeonChallengeMgr::SetCreatureBaseHealth(Creature* creature, uint32 health)
+{
+    health = std::max(1u, health);
+    creature->SetCreateHealth(health);
+    creature->SetStatFlatModifier(UNIT_MOD_HEALTH, BASE_VALUE, float(health));
+    creature->UpdateMaxHealth();
+    creature->SetFullHealth();
+}
+
+bool DungeonChallengeMgr::IsPlayerSideCreature(Creature* creature)
+{
+    if (creature->IsPet() || creature->IsControlledByPlayer() || creature->IsCharmedOwnedByPlayerOrPlayer())
+        return true;
+
+    // A summon carries no owner when its script summoned it without one, so ask
+    // who summoned it: a player directly, or a unit a player controls (a pet).
+    if (TempSummon* summon = creature->ToTempSummon())
+    {
+        if (summon->GetSummonerGUID().IsPlayer())
+            return true;
+        if (Unit* summoner = summon->GetSummonerUnit())
+            return summoner->IsControlledByPlayer() || summoner->IsCharmedOwnedByPlayerOrPlayer();
+    }
+    return false;
 }
 
 // ============================================================================

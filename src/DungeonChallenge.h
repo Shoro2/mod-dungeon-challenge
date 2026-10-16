@@ -194,6 +194,8 @@ struct CreatureChallengeData : public DataMap::Base
 {
     bool processed = false;                // already scaled for difficulty
     uint32 originalHealth = 0;             // health before scaling
+    uint32 baseCreateHealth = 0;           // unscaled create health of this life (0 = take it at the next scaling)
+    bool scaled = false;                   // difficulty scaling is applied (heals on it are scaled too)
     float extraDamageMultiplier = 1.0f;    // stored damage multiplier for UnitScript hooks
     std::vector<DungeonChallengeAffix> affixes;  // all assigned affixes
     uint8 lilBroGeneration = 0;            // 0 = original, 1 = first split, 2 = second split (no more)
@@ -304,6 +306,16 @@ public:
     void ApplyAffixToCreature(Creature* creature, DungeonChallengeAffix affix, uint32 difficulty);
     void ScaleCreatureForDifficulty(Creature* creature, uint32 difficulty);
     void ProcessCreature(Creature* creature, Map* map);
+
+    // Sets a creature's health through the carriers Creature::SelectLevel uses
+    // (create health + UNIT_MOD_HEALTH base value), so Creature::UpdateMaxHealth,
+    // which runs whenever a health aura is applied or removed, keeps it.
+    static void SetCreatureBaseHealth(Creature* creature, uint32 health);
+
+    // Pets, guardians, player totems and vehicles, and anything a player or a
+    // player's pet summoned. These are never scaled, never respawn-copied and
+    // never get their heals scaled.
+    static bool IsPlayerSideCreature(Creature* creature);
 
     // Snapshots
     void SaveBossKillSnapshot(ChallengeRun const* run, Creature* boss, bool isFinalBoss, bool rewarded);
