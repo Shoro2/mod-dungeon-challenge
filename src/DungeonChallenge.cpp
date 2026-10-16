@@ -1051,7 +1051,9 @@ void DungeonChallengeMgr::ScaleCreatureForDifficulty(Creature* creature, uint32 
     // level multipliers then apply on top, as in a level-80 dungeon. Once per
     // life: OnCreatureSelectLevel clears originalLevel when the core rebuilds
     // the stats.
-    if (uint8 uplift = GetScale(creature->GetMapId()).upliftLevel)
+    // Capped at 81, so bosses (+2) stay at 83: creature_classlevelstats has no
+    // real rows above level 83 (base health 1).
+    if (uint8 uplift = std::min<uint8>(GetScale(creature->GetMapId()).upliftLevel, 81))
     {
         if (!creatureData->originalLevel && !IsPlayerSideCreature(creature))
         {
