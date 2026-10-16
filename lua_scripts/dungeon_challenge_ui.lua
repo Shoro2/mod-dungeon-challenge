@@ -944,10 +944,15 @@ function ShowSnapshotData(mapId, entries)
                 rewardTag = " |cffffcc00[REWARDED]|r"
             end
 
+            local fightTag = ""
+            if (e.combatTime or 0) > 0 then
+                fightTag = string.format("  |cffffff00fight %s|r", FormatTime(e.combatTime))
+            end
+
             local line = string.format(
-                " %sLv%d|r  |cffff8000%s|r  at |cff00ff00%s|r  |cffaaaaaa%d deaths (+%ds)|r  |cff69ccf0%s|r%s%s",
+                " %sLv%d|r  |cffff8000%s|r  at |cff00ff00%s|r%s  |cffaaaaaa%d deaths (+%ds)|r  |cff69ccf0%s|r%s%s",
                 DifficultyColorHex(e.difficulty or 1), e.difficulty or 1,
-                e.bossName or "?", timeStr, e.deaths or 0, e.penalty or 0,
+                e.bossName or "?", timeStr, fightTag, e.deaths or 0, e.penalty or 0,
                 e.playerName or "?", finalTag, rewardTag)
             AddLabel(y, line, "GameFontHighlightSmall")
             y = y - 16
@@ -1476,18 +1481,21 @@ end
 -- Active Run Tracker Handlers
 -- ============================================================================
 
--- Server signals run has started (player entered dungeon)
-DC_ClientHandlers.RunStart = function(player, dungeonName, difficulty, timerSeconds, totalBosses, affixString)
+-- Server signals run has started (player entered dungeon). A run restored
+-- after a restart or a reconnect also sends its elapsed time, bosses killed,
+-- deaths and penalty.
+DC_ClientHandlers.RunStart = function(player, dungeonName, difficulty, timerSeconds, totalBosses, affixString,
+        elapsedSeconds, bossesKilled, deathCount, penaltyTime)
     activeRunData = {
         dungeonName = dungeonName or "Unknown",
         difficulty = difficulty or 1,
         timerSeconds = timerSeconds or 1800,
         totalBosses = totalBosses or 3,
         affixString = affixString or "None",
-        startClientTime = GetTime(),
-        bossesKilled = 0,
-        deathCount = 0,
-        penaltyTime = 0,
+        startClientTime = GetTime() - (elapsedSeconds or 0),
+        bossesKilled = bossesKilled or 0,
+        deathCount = deathCount or 0,
+        penaltyTime = penaltyTime or 0,
         bossKills = {},
         completed = false,
         completionTime = 0,
@@ -1583,8 +1591,12 @@ DC_ClientHandlers.ShowRunSummary = function(player, outcome, dungeonName, diffic
     -- Boss split times
     local lines = {}
     for i, bk in ipairs(bossKills) do
-        table.insert(lines, string.format("|cff00ff00- %s|r  |cffaaaaaa%s|r",
-            bk.name or ("Boss " .. i), FmtTime(bk.time or 0)))
+        local fight = ""
+        if (bk.combat or 0) > 0 then
+            fight = string.format("  |cffffff00(fight %s)|r", FmtTime(bk.combat))
+        end
+        table.insert(lines, string.format("|cff00ff00- %s|r  |cffaaaaaa%s|r%s",
+            bk.name or ("Boss " .. i), FmtTime(bk.time or 0), fight))
     end
     if #lines == 0 then
         lines = { "|cff666666- No bosses defeated|r" }

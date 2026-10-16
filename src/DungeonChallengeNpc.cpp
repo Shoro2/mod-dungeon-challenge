@@ -622,6 +622,7 @@ private:
         }
 
         run->state = CHALLENGE_STATE_ABANDONED;
+        sDungeonChallengeMgr->DeleteActiveRun(run->instanceId);
 
         // Notify all participants
         for (auto const& guid : run->participants)

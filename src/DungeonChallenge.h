@@ -19,6 +19,7 @@
 #include <vector>
 #include <string>
 #include <random>
+#include <algorithm>
 
 // ============================================================================
 // Constants
@@ -26,6 +27,11 @@
 
 constexpr uint32 CHALLENGE_GO_ENTRY          = 500002;  // default GameObject entry
 constexpr uint32 SNAPSHOT_RELOAD_INTERVAL    = 600000;  // 10 minutes in ms
+constexpr uint32 NPC_LIGHTNING_SPHERE        = 500100;  // run affix Lightning Sphere (06-custom-ids)
+constexpr uint32 SECONDS_PER_WEEK            = 604800;
+// The affix rotation turns on Wednesday 00:00 UTC: the Unix epoch was a
+// Thursday, so a week index counted from six days later starts on a Wednesday.
+constexpr uint32 ROTATION_EPOCH_OFFSET       = 6 * 86400;
 
 // ============================================================================
 // Affix Definitions
@@ -44,8 +50,19 @@ enum DungeonChallengeAffix : uint32
     AFFIX_DAMAGE_REDUCE     = 8,  // Allies within 30y take -25% damage
     AFFIX_BIGGER_BOY        = 9,  // Additional +50% HP, size/damage via DBC
     AFFIX_HELL_TOUCHED      = 10, // Extra 666 fire+shadow dmg, -2% stats debuff per stack (10s, 10 stacks)
+    AFFIX_LIGHTNING_SPHERE  = 11, // run affix: spheres appear that pulse damage to every player until killed
+    AFFIX_ENTANGLING_ROOTS  = 12, // run affix: a nearby enemy roots a player now and then
+    AFFIX_ENRAGE            = 13, // run affix: enemies in combat enrage now and then
 
     AFFIX_MAX
+};
+
+// Mob affixes go on the affixed share of the mobs; run affixes act on the
+// whole instance (dungeon_challenge_affix.kind).
+enum DungeonChallengeAffixKind : uint8
+{
+    AFFIX_KIND_MOB = 0,
+    AFFIX_KIND_RUN = 1,
 };
 
 // ============================================================================
@@ -63,13 +80,46 @@ constexpr uint32 SPELL_AFFIX_BIGGER_BOY          = 900057;  // Aura on NPC: size
 constexpr uint32 SPELL_AFFIX_HEAVY_HITS          = 900058;  // Aura on NPC: +33% damage
 constexpr uint32 SPELL_AFFIX_LIL_BRO             = 900059;  // Aura on NPC: Lil Bro visual
 constexpr uint32 SPELL_AFFIX_CALL_FOR_HELP       = 900060;  // Aura on NPC: Call for Help visual
+constexpr uint32 SPELL_ENTANGLING_ROOTS          = 57095;   // stock: the Entangling Roots run affix
+constexpr uint32 SPELL_ENRAGE                    = 55285;   // stock: the Enrage run affix
+constexpr uint32 SPELL_LIGHTNING_VISUAL          = 61585;   // stock: the Lightning Sphere's pulse visual
 
+// One row of world `dungeon_challenge_affix` (or the built-in default when the
+// table is empty). The behaviour stays in code; the row decides whether and
+// from which level an affix appears, whether it rotates weekly, and its numbers.
 struct AffixInfo
 {
     DungeonChallengeAffix id;
     std::string name;
     std::string description;
     uint32 minDifficulty;      // minimum difficulty level to appear
+    DungeonChallengeAffixKind kind = AFFIX_KIND_MOB;
+    bool weekly = false;       // part of the weekly rotation instead of always on
+    bool enabled = true;
+    float value1 = 0.0f;       // affix-specific number, see the seed SQL
+    float value2 = 0.0f;
+    uint32 spellId = 0;        // shown as a spell link in the UI
+};
+
+// One row of world `dungeon_challenge_scale`: per-dungeon factors on top of the
+// level multipliers, and the level-uplift target for low-level dungeons.
+struct DungeonScale
+{
+    float trashHealth = 1.0f;
+    float trashDamage = 1.0f;
+    float bossHealth  = 1.0f;
+    float bossDamage  = 1.0f;
+    uint8 upliftLevel = 0;     // 0 = no uplift; else trash at this level, elites +1, bosses +2
+};
+
+// One row of world `dungeon_challenge_reward`: an item paid for a completed run
+// whose level lies in [minLevel, maxLevel]; the count doubles in time.
+struct RewardEntry
+{
+    uint32 minLevel;
+    uint32 maxLevel;
+    uint32 itemEntry;
+    uint32 itemCount;
 };
 
 // ============================================================================
@@ -119,6 +169,7 @@ struct BossKillSnapshot
     uint32 penaltyTime;     // accumulated death penalty in seconds
     std::string playerName;
     uint32 playerGuid;
+    uint32 combatTime = 0;  // seconds from the first player hit to the kill
 };
 
 // ============================================================================
@@ -156,6 +207,14 @@ struct ChallengeRun
     std::unordered_set<ObjectGuid> affixedCreatures;  // creatures that got affixes
     std::unordered_map<ObjectGuid, std::vector<DungeonChallengeAffix>> creatureAffixes;
     std::unordered_map<ObjectGuid, WorldLocation> participantOrigins;  // pre-teleport positions
+    std::vector<DungeonChallengeAffix> affixes;        // every affix of this run (mob and run affixes), fixed at its start
+    uint32 affixWeek = 0;                  // rotation week the affixes were drawn from
+    uint32 sphereTimerMs = 0;              // AFFIX_LIGHTNING_SPHERE spawn clock
+    std::unordered_map<ObjectGuid, uint32> rootTimersMs;  // AFFIX_ENTANGLING_ROOTS clock per player
+    bool restored = false;                 // rebuilt from dungeon_challenge_active after a restart or unload
+    DungeonChallengeAffix forcedAffix = AFFIX_NONE; // .dchallenge force: the run affix's next roll fires now
+    std::string lastBossName;              // the last boss credited, and its fight (.dchallenge status)
+    uint32 lastBossCombatTime = 0;
     uint32 completionDelayMs = 0;          // countdown for post-completion teleport (ms)
     uint32 summaryElapsedMs = 0;           // ms elapsed in SUMMARY state (drives the C++ safety-fallback teleport)
     bool   endedByDeath     = false;       // true if the run ended by death/wipe (vs. a clear)
@@ -173,6 +232,11 @@ struct ChallengeRun
     uint32 GetEffectiveElapsed() const
     {
         return elapsedTime + penaltyTime;
+    }
+
+    bool HasAffix(DungeonChallengeAffix a) const
+    {
+        return std::find(affixes.begin(), affixes.end(), a) != affixes.end();
     }
 };
 
@@ -197,6 +261,10 @@ struct CreatureChallengeData : public DataMap::Base
     uint32 baseCreateHealth = 0;           // unscaled create health of this life (0 = take it at the next scaling)
     bool scaled = false;                   // difficulty scaling is applied (heals on it are scaled too)
     float extraDamageMultiplier = 1.0f;    // stored damage multiplier for UnitScript hooks
+    float healthMultiplier = 1.0f;         // health factor applied (level x dungeon factor); mob heals on it scale with it
+    uint64 engageTimeMs = 0;               // bosses: game time of the first player hit (0 = not engaged)
+    uint32 enrageTimerMs = 0;              // AFFIX_ENRAGE clock
+    uint8 originalLevel = 0;               // level before an uplift (0 = not uplifted)
     std::vector<DungeonChallengeAffix> affixes;  // all assigned affixes
     uint8 lilBroGeneration = 0;            // 0 = original, 1 = first split, 2 = second split (no more)
     bool noLoot = false;                   // for LIL_BRO non-lootable copy
@@ -259,6 +327,11 @@ public:
     void LoadLeaderboard();
     void LoadSpellOverrides();
     void LoadSnapshots();
+    void LoadScales();
+    void LoadRewards();
+    void LoadBossEntries();
+    void LoadExpectedPlayerHealth();
+    void LoadTuningTables();   // affixes, scales, rewards, boss entries (.dchallenge reload)
 
     // Getters
     bool IsEnabled() const { return _enabled; }
@@ -281,7 +354,41 @@ public:
     // Affix Info
     AffixInfo const* GetAffixInfo(DungeonChallengeAffix affix) const;
     std::vector<AffixInfo> const& GetAllAffixes() const { return _affixes; }
+    // Every affix a run at this level gets in the current rotation week
+    // (always-on affixes from their level, plus this week's weekly ones).
     std::vector<DungeonChallengeAffix> GetAffixesForDifficulty(uint32 difficulty) const;
+    std::vector<DungeonChallengeAffix> GetAffixesForDifficulty(uint32 difficulty, uint32 week) const;
+    std::vector<DungeonChallengeAffix> GetWeeklyAffixes(uint32 week) const;
+    uint32 GetCurrentWeek() const;
+    void SetWeekPin(uint32 week) { _weekPin = week; }   // 0 = follow the real week
+    uint32 GetWeekPin() const { return _weekPin; }
+    uint32 GetWeeklyAffixCount() const { return _weeklyAffixCount; }
+    float GetAffixValue(DungeonChallengeAffix affix, uint8 index, float fallback) const;
+
+    // Per-dungeon factors (idea 4) and boss detection
+    DungeonScale const& GetScale(uint32 mapId) const;
+    void SetScale(uint32 mapId, DungeonScale const& scale) { _scales[mapId] = scale; }
+    bool IsChallengeBoss(Creature const* creature) const;
+    float GetCreatureHealthMultiplier(Creature const* creature, uint32 difficulty) const;
+    float GetCreatureDamageMultiplier(Creature const* creature, uint32 difficulty) const;
+
+    // Level uplift for low-level dungeons (idea 9)
+    void UpliftCreature(Creature* creature, uint8 level);
+    int32 ScaleUpliftedSpellDamage(Creature const* creature, int32 damage) const;
+    uint32 GetExpectedPlayerHealth(uint8 level) const;
+
+    // Rewards table (idea 7)
+    std::vector<RewardEntry> GetRewardsForLevel(uint32 level) const;
+
+    // Run persistence across restarts and unloads (idea 10)
+    void SaveActiveRun(ChallengeRun const* run);
+    void DeleteActiveRun(uint32 instanceId);
+    ChallengeRun* TryRestoreRun(Player* player, Map* map);
+    void CleanupActiveRuns();
+
+    // Run affixes that act on the whole instance (idea 6)
+    void UpdateRunAffixes(ChallengeRun* run, Map* map, uint32 diff);
+    void UpdateCreatureRunAffixes(ChallengeRun* run, Creature* creature, uint32 diff);
 
     // Boss Groups (multi-mob encounters counted as one boss)
     uint32 GetBossGroupId(uint32 creatureEntry) const;
@@ -318,7 +425,7 @@ public:
     static bool IsPlayerSideCreature(Creature* creature);
 
     // Snapshots
-    void SaveBossKillSnapshot(ChallengeRun const* run, Creature* boss, bool isFinalBoss, bool rewarded);
+    void SaveBossKillSnapshot(ChallengeRun const* run, Creature* boss, bool isFinalBoss, bool rewarded, uint32 combatTime);
     std::vector<BossKillSnapshot> GetSnapshotsForDungeon(uint32 mapId, uint32 difficulty, uint32 limit = 20) const;
 
     // Leaderboard
@@ -354,6 +461,11 @@ private:
     uint32 _deathEndsRunMode;   // 0 = end on WIPE, 1 = end on ANY death (default 0)
     uint32 _fallbackSeconds;    // C++ safety teleport threshold, should be > _summarySeconds (default 40)
     uint32 _runCredit;          // kill credit per completed run for the call board's run quests (default 402451, 0 = off)
+    uint32 _weeklyAffixCount;   // weekly affixes drawn per rotation week (default 2)
+    uint32 _weekPin = 0;        // GM preview/test: a fixed rotation week (.dchallenge week), 0 = the real one; never saved
+    uint32 _restoreWindowMinutes; // a saved run older than this is not restored (default 120)
+    float _upliftDrThreshold;   // uplifted spell damage: extra damage above this grows with diminishing returns (default 10000)
+    float _upliftDrExponent;    // ... with this exponent (default 0.975)
 
     // Data
     std::vector<DungeonInfo> _dungeons;
@@ -362,6 +474,10 @@ private:
     std::unordered_map<uint32, ChallengeRun> _activeRuns; // instanceId -> run
     std::unordered_map<uint32, std::vector<LeaderboardEntry>> _leaderboard; // mapId -> entries
     std::vector<SpellOverrideEntry> _spellOverrides;
+    std::unordered_map<uint32, DungeonScale> _scales;      // mapId -> factors
+    std::vector<RewardEntry> _rewards;
+    std::unordered_set<uint32> _bossEntries;               // creature entries that count as bosses below rank 3
+    std::unordered_map<uint8, uint32> _expectedPlayerHealth; // level -> expected player health (uplift spell rule)
     // Snapshots: mapId -> vector of snapshots
     std::unordered_map<uint32, std::vector<BossKillSnapshot>> _snapshots;
 

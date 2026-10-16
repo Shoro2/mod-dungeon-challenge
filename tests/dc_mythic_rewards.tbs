@@ -1,0 +1,53 @@
+name    mod-dungeon-challenge: item rewards, combat time per boss and the Enrage affix
+# Server-side test bot run (mod-fl-testbots), T1. Mythic+ ideas 7, 8 and 6 (Enrage), in FL: Akleia (747, one boss,
+# single difficulty) at level 10.
+#   6. week 3001 = Enrage + Lightning Sphere; a forced Enrage (55285) lands on Scaleburn (81332) once it fights.
+#   8. the director hits Scaleburn (`.damage`), waits about 3 s and kills him (`.die`): the run's last boss reads
+#      "fight 0:03" (0:02-0:04 with the update ticks).
+#   7. the clear pays the level band 10-19: 2 Emblems of Frost (49426), doubled in time = 4 for bot a.
+timeout 180s
+
+bot a warrior
+group party
+
+place 727 13288.5 11776.2 -31.5
+require a alive
+do a destroy 49426
+expect a item 49426 == 0
+
+as gm .dchallenge week 3001
+expect output has "Enrage"
+as gm .dchallenge start 747 10
+waitfor gm map 747 timeout 20s
+waitfor a map 747 timeout 20s
+wait 2s
+as gm .dchallenge status
+expect output has "level 10"
+expect output has "Enrage"
+
+log 6 - forced Enrage on the boss in combat
+as gm .cheat god on
+pick boss creature:81332 near gm
+require boss exists
+do gm target boss
+as gm .damage 1000
+waitfor boss incombat timeout 5s
+as gm .dchallenge force 13
+waitfor boss aura 55285 timeout 5s
+
+log 8 - combat time of the boss
+wait 2s
+as gm .die
+waitfor boss dead timeout 5s
+wait 1s
+as gm .dchallenge status
+expect output has "Last boss: Scaleburn - fight 0:0"
+
+log 7 - the level band's item reward, doubled in time
+expect a item 49426 == 4
+
+cleanup
+as gm .cheat god off
+as gm .dchallenge week 0
+place 727 13288.5 11776.2 -31.5
+do a destroy 49426

@@ -1,0 +1,45 @@
+name    mod-dungeon-challenge: a Turtle dungeon lifted to level 80 (Crescent Grove)
+# Server-side test bot run (mod-fl-testbots), T1. Mythic+ idea 9, in Turtle's Crescent Grove (802, levels 30-40,
+# dungeon_challenge_scale.uplift_level 80) at challenge level 10 (health x1.5).
+#   A Groveweald Warrior (930029, rank-1 elite, level 30-31, HealthModifier 3) goes to level 81 with the WotLK
+#   base health (about 13000 x 3 x 1.5 = 58700; unlifted about 1500): above 50000.
+#   Grovetender Engryss (930036, level 34, a boss through dungeon_challenge_boss_entry) goes to level 82:
+#   13481 x 8.09 x 1.5 = 163650, above 150000.
+timeout 180s
+
+bot a warrior
+group party
+
+place 727 13288.5 11776.2 -31.5
+require a alive
+as gm .cheat god on
+as gm .dchallenge start 802 10
+waitfor gm map 802 timeout 20s
+waitfor a map 802 timeout 20s
+wait 2s
+
+log trash - a warrior at level 81
+do gm goto 410.0 -80.0 260.0
+wait 3s
+pick war creature:930029 near gm
+require war exists
+expect war maxhealth > 50000
+do gm target war
+as gm .dchallenge status
+expect output has "level 81"
+expect output has "boss no"
+
+log boss - Grovetender Engryss at level 82
+do gm goto 255.0 -140.0 277.0
+wait 3s
+pick eng creature:930036 near gm
+require eng exists
+expect eng maxhealth > 150000
+do gm target eng
+as gm .dchallenge status
+expect output has "level 82"
+expect output has "boss yes"
+
+cleanup
+as gm .cheat god off
+place 727 13288.5 11776.2 -31.5

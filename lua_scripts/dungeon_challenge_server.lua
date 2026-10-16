@@ -35,7 +35,10 @@ local CONFIG = {
 -- Affix Data
 -- ============================================================================
 
--- Every 10 levels adds +1 affix. Selected mobs receive ALL available affixes.
+-- The table dungeon_challenge_affix (world DB) is authoritative, as in C++;
+-- this list is the built-in fallback when the table is empty. Mob affixes
+-- (kind 0) go on the affixed mobs, run affixes (kind 1) act on the whole
+-- instance; weekly affixes rotate (WEEKLY_AFFIX_COUNT per week).
 local AFFIXES = {
     { id = 1,  name = "Call for Help",   desc = "Calls allies within 30y for help",                     minDiff = 10,  spellId = 900060 },
     { id = 2,  name = "Speedy",          desc = "+100% move speed, +10% attack speed",                  minDiff = 20,  spellId = 900050 },
@@ -49,6 +52,72 @@ local AFFIXES = {
     { id = 10, name = "Hell Touched",    desc = "+666 hellfire dmg on hit, -2% stats per stack (10s, stacks 10)", minDiff = 100, spellId = 900054 },
 }
 
+-- Must match DungeonChallenge.WeeklyAffixCount (C++ is authoritative).
+local WEEKLY_AFFIX_COUNT = 2
+local SECONDS_PER_WEEK = 604800
+local ROTATION_EPOCH_OFFSET = 6 * 86400  -- weeks turn on Wednesday 00:00 UTC
+
+local function LoadAffixes()
+    local query = WorldDBQuery(
+        "SELECT affix_id, name, description, min_level, kind, weekly, spell_id "
+        .. "FROM dungeon_challenge_affix WHERE enabled = 1 ORDER BY affix_id")
+    if not query then return end
+    local loaded = {}
+    repeat
+        table.insert(loaded, {
+            id      = query:GetUInt32(0),
+            name    = query:GetString(1),
+            desc    = query:GetString(2),
+            minDiff = query:GetUInt32(3),
+            kind    = query:GetUInt32(4),
+            weekly  = query:GetUInt32(5) == 1,
+            spellId = query:GetUInt32(6),
+        })
+    until not query:NextRow()
+    AFFIXES = loaded
+end
+
+LoadAffixes()
+
+local function CurrentWeek()
+    return math.floor((os.time() - ROTATION_EPOCH_OFFSET) / SECONDS_PER_WEEK)
+end
+
+-- Same wheel as DungeonChallengeMgr::GetWeeklyAffixes: the weekly pool by id,
+-- week w takes WEEKLY_AFFIX_COUNT affixes starting at w x count.
+local function WeeklyAffixIds(week)
+    local pool = {}
+    for _, a in ipairs(AFFIXES) do
+        if a.weekly then table.insert(pool, a.id) end
+    end
+    table.sort(pool)
+    local chosen = {}
+    if #pool == 0 or WEEKLY_AFFIX_COUNT == 0 then return chosen end
+    local count = math.min(WEEKLY_AFFIX_COUNT, #pool)
+    local start = (week * count) % #pool
+    for i = 0, count - 1 do
+        chosen[pool[((start + i) % #pool) + 1]] = true
+    end
+    return chosen
+end
+
+-- The affixes of this week: always-on ones plus this week's weekly ones.
+local function ActiveAffixes()
+    local weekly = WeeklyAffixIds(CurrentWeek())
+    local result = {}
+    for _, a in ipairs(AFFIXES) do
+        if not a.weekly or weekly[a.id] then table.insert(result, a) end
+    end
+    return result
+end
+
+local function AffixNameById(id)
+    for _, a in ipairs(AFFIXES) do
+        if a.id == id then return a.name end
+    end
+    return "#" .. id
+end
+
 -- ============================================================================
 -- Active Run UI Tracking State
 -- ============================================================================
@@ -57,7 +126,7 @@ local trackedRuns = {}  -- playerGuidLow -> shared run tracking table
 
 local function BuildAffixString(difficulty)
     local names = {}
-    for _, a in ipairs(AFFIXES) do
+    for _, a in ipairs(ActiveAffixes()) do
         if difficulty >= a.minDiff then
             table.insert(names, a.name)
         end
@@ -72,6 +141,7 @@ end
 
 local dungeons = {}
 local bossGroups = {}  -- creatureEntry -> groupId (multi-mob encounters count once)
+local bossEntries = {} -- creatureEntry -> true: bosses below rank 3 (dungeon_challenge_boss_entry)
 
 -- ============================================================================
 -- Load Dungeon Data from World DB
@@ -115,8 +185,19 @@ local function LoadBossGroups()
     end
 end
 
+local function LoadBossEntries()
+    bossEntries = {}
+    local query = WorldDBQuery("SELECT creature_entry FROM dungeon_challenge_boss_entry")
+    if query then
+        repeat
+            bossEntries[query:GetUInt32(0)] = true
+        until not query:NextRow()
+    end
+end
+
 LoadDungeons()
 LoadBossGroups()
+LoadBossEntries()
 
 -- ============================================================================
 -- Helper: Build config table for client (small, safe for init message)
@@ -151,8 +232,11 @@ local PLAYER_EVENT_ON_LOGIN = 3
 RegisterPlayerEvent(PLAYER_EVENT_ON_LOGIN, function(event, player)
     -- Small delay to ensure AIO init has completed
     player:RegisterEvent(function(eventId, delay, repeats, pl)
+        -- Only this week's affixes: the client lists what a run at a level gets.
+        local active = ActiveAffixes()
+
         -- Send total counts first so client knows what to expect
-        AIO.Handle(pl, "DungeonChallenge", "InitBegin", #dungeons, #AFFIXES)
+        AIO.Handle(pl, "DungeonChallenge", "InitBegin", #dungeons, #active)
 
         -- Send each dungeon as flat parameters (no nested tables)
         for _, d in ipairs(dungeons) do
@@ -161,16 +245,18 @@ RegisterPlayerEvent(PLAYER_EVENT_ON_LOGIN, function(event, player)
         end
 
         -- Send each affix as flat parameters (including spellId for links)
-        for _, a in ipairs(AFFIXES) do
+        for _, a in ipairs(active) do
+            local desc = a.desc
+            if a.weekly then desc = desc .. " (this week)" end
             AIO.Handle(pl, "DungeonChallenge", "InitAffix",
-                a.id, a.name, a.desc, a.minDiff, a.spellId)
+                a.id, a.name, desc, a.minDiff, a.spellId)
         end
 
         -- Signal that init is complete
         AIO.Handle(pl, "DungeonChallenge", "InitComplete")
 
         print("[mod-dungeon-challenge] AIO: Sent init to " .. pl:GetName()
-            .. " (" .. #dungeons .. " dungeons, " .. #AFFIXES .. " affixes)")
+            .. " (" .. #dungeons .. " dungeons, " .. #active .. " affixes)")
     end, 1, 1, 1) -- 1ms delay, 1 repeat
 end)
 
@@ -241,7 +327,7 @@ ServerHandlers.RequestSnapshots = function(player, mapId)
     local entries = {}
     local query = CharDBQuery(string.format(
         "SELECT difficulty, creature_name, snap_time, deaths, penalty_time, "
-        .. "player_name, is_final_boss, rewarded "
+        .. "player_name, is_final_boss, rewarded, combat_time "
         .. "FROM dungeon_challenge_snapshot "
         .. "WHERE map_id = %d ORDER BY difficulty DESC, snap_time ASC LIMIT 30",
         mapId))
@@ -257,6 +343,7 @@ ServerHandlers.RequestSnapshots = function(player, mapId)
                 playerName = query:GetString(5),
                 isFinal    = query:GetUInt8(6) == 1,
                 rewarded   = query:GetUInt8(7) == 1,
+                combatTime = query:GetUInt32(8),
             })
         until not query:NextRow()
     end
@@ -559,7 +646,7 @@ local function TryShowSummaryFor(p)
 
     local q = CharDBQuery(string.format(
         "SELECT outcome, total_time, effective_time, in_time, deaths, map_id, difficulty, "
-        .. "home_map, home_x, home_y, home_z "
+        .. "home_map, home_x, home_y, home_z, instance_id "
         .. "FROM dungeon_challenge_runend WHERE player_guid = %d", g))
     if not q then return end  -- run has not ended yet; the client keeps polling
 
@@ -573,6 +660,7 @@ local function TryShowSummaryFor(p)
     local homeX      = q:GetFloat(8)
     local homeY      = q:GetFloat(9)
     local homeZ      = q:GetFloat(10)
+    local instanceId = q:GetUInt32(11)
 
     -- Consume the signal so the summary is only sent once.
     CharDBExecute(string.format(
@@ -580,6 +668,20 @@ local function TryShowSummaryFor(p)
 
     local dungeonName  = (run and run.dungeonName) or DungeonNameByMap(mapId)
     local bossKills    = (run and run.bossKills) or {}
+
+    -- Combat time per boss (C++ snapshots of this instance, by boss name).
+    local fights = {}
+    local fq = CharDBQuery(string.format(
+        "SELECT creature_name, combat_time FROM dungeon_challenge_snapshot "
+        .. "WHERE instance_id = %d AND player_guid = %d", instanceId, g))
+    if fq then
+        repeat
+            fights[fq:GetString(0)] = fq:GetUInt32(1)
+        until not fq:NextRow()
+    end
+    for _, bk in ipairs(bossKills) do
+        bk.combat = fights[bk.name] or bk.combat
+    end
     local personalBest = (run and run.personalBest[g]) or 0  -- 0 = no record (avoids nil mid-args)
     local globalBest   = (run and run.globalBest) or 0
 
@@ -644,6 +746,7 @@ RegisterGameObjectGossipEvent(GO_ENTRY, 1, OnGossipHello)
 local function IsChallengeBoss(creature)
     if creature:GetRank() >= 3 then return true end
     if creature:IsWorldBoss() then return true end
+    if bossEntries[creature:GetEntry()] then return true end
     -- IsDungeonBoss may not exist in all Eluna versions; check safely
     if creature.IsDungeonBoss and creature:IsDungeonBoss() then return true end
     return false
@@ -748,11 +851,88 @@ local function StartMobScanner(instanceId, mapId)
     end, CONFIG.MOB_SCAN_INTERVAL_MS, 0)  -- repeats = 0: run until removed
 end
 
+-- A run saved before a restart (C++ dungeon_challenge_active) is restored by
+-- C++ when a participant enters its instance. Lua's tracking lives only in
+-- this process, so it is rebuilt from the same row: one shared table per
+-- instance, as for a fresh run.
+local restoredRuns = {}  -- instanceId -> run tracking table
+
+local function DungeonByMap(mapId)
+    for _, d in ipairs(dungeons) do
+        if d.mapId == mapId then return d end
+    end
+    return nil
+end
+
+local function TryRestoreTracking(player)
+    local guid = player:GetGUIDLow()
+    if trackedRuns[guid] then return end
+    local dungeon = DungeonByMap(player:GetMapId())
+    if not dungeon then return end
+    local instanceId = player:GetInstanceId()
+    local q = CharDBQuery(string.format(
+        "SELECT difficulty, start_time, timer_duration, death_count, penalty_time, bosses_killed, "
+        .. "participants, affixes FROM dungeon_challenge_active WHERE instance_id = %d AND map_id = %d",
+        instanceId, dungeon.mapId))
+    if not q then return end
+
+    local isParticipant = false
+    for low in string.gmatch(q:GetString(6), "%d+") do
+        if tonumber(low) == guid then isParticipant = true end
+    end
+    if not isParticipant then return end
+
+    local run = restoredRuns[instanceId]
+    if not run or run.state ~= "running" then
+        local names = {}
+        for id in string.gmatch(q:GetString(7), "%d+") do
+            table.insert(names, AffixNameById(tonumber(id)))
+        end
+        run = {
+            mapId = dungeon.mapId,
+            difficulty = q:GetUInt32(0),
+            dungeonName = dungeon.name,
+            timerSeconds = q:GetUInt32(2),
+            totalBosses = dungeon.bossCount,
+            bossesKilled = q:GetUInt32(5),
+            deathCount = q:GetUInt32(3),
+            penaltyTime = q:GetUInt32(4),
+            startTime = q:GetUInt32(1),
+            state = "running",
+            bossKills = {},
+            killedBossGuids = {},
+            killedBossGroups = {},
+            affixString = #names > 0 and table.concat(names, ", ") or "None",
+            personalBest = {},
+            globalBest = nil,
+            exitDest = {},
+            exited = {},
+            restored = true,
+        }
+        restoredRuns[instanceId] = run
+    end
+    trackedRuns[guid] = run
+
+    AIO.Handle(player, "DungeonChallenge", "RunStart",
+        run.dungeonName, run.difficulty, run.timerSeconds, run.totalBosses, run.affixString,
+        math.max(0, os.time() - run.startTime), run.bossesKilled, run.deathCount, run.penaltyTime)
+    StartMobScanner(instanceId, run.mapId)
+end
+
 -- Detect dungeon entry: start run timer + send RunStart to client
 RegisterPlayerEvent(28, function(event, player)  -- PLAYER_EVENT_ON_MAP_CHANGE
     local guid = player:GetGUIDLow()
     local run = trackedRuns[guid]
-    if not run then return end
+    if not run then
+        -- C++ restores a saved run in its own map-change hook, which may run
+        -- after this one: look one moment later.
+        if DungeonByMap(player:GetMapId()) then
+            player:RegisterEvent(function(eventId, delay, repeats, pl)
+                TryRestoreTracking(pl)
+            end, 500, 1)
+        end
+        return
+    end
 
     local newMapId = player:GetMapId()
 

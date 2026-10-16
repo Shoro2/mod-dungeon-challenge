@@ -1,0 +1,48 @@
+name    mod-dungeon-challenge: a running run comes back after it left the server's memory
+# Server-side test bot run (mod-fl-testbots), T1, Mythic+ idea 10. A run is a row of characters
+# dungeon_challenge_active while it runs. `.dchallenge forget` drops it from memory and keeps the row - what a
+# restart or an instance unload does to the run. Bot a then reconnects (`relog`, the core's logout and login in
+# the same instance): entering the instance restores the run with its level, deaths and running clock. A real
+# restart cannot be shown with bots: the test bot module takes its bots out of their instances at shutdown.
+timeout 150s
+
+bot a warrior
+group party
+
+place 727 13288.5 11776.2 -31.5
+require a alive
+as gm .dchallenge start 574 5
+waitfor gm map 574 timeout 20s
+waitfor a map 574 timeout 20s
+wait 2s
+as gm .dchallenge status
+expect output has "level 5"
+expect output lacks "(restored)"
+
+log a death is saved with the run
+do a die
+wait 1s
+do a revive
+as gm .dchallenge status
+expect output has "deaths 1"
+
+log the run leaves memory, a participant comes back
+as gm .dchallenge forget
+expect output has "forgotten"
+as gm .dchallenge status
+expect output has "No Dungeon Challenge run"
+wait 2s
+do a relog
+waitfor a exists timeout 20s
+waitfor a map 574 timeout 20s
+wait 2s
+as gm .dchallenge status
+expect output has "level 5"
+expect output has "(restored)"
+expect output has "deaths 1"
+
+cleanup
+place 727 13288.5 11776.2 -31.5
+wait 2s
+as gm .dchallenge status
+expect output has "No Dungeon Challenge run"
