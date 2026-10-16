@@ -1,4 +1,4 @@
-name    mod-dungeon-challenge: boss adds at challenge level 100 carry the run's health and their kills stay in the run
+name    mod-dungeon-challenge: boss adds at challenge level 100 carry the run's health
 # Server-side test bot run (mod-fl-testbots), T1. The level-100 sibling of dc_scaling_holes: Utgarde Keep (heroic) at
 # the highest level (health x6.0, damage x3.0 with the workbench's 5 % / 2 % per level). Keleseth's five Vrykul
 # Skeletons (23970, 4383-4534 health unscaled) must come out at 26298-27204: the check is > 20000; Keleseth himself
