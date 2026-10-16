@@ -341,6 +341,7 @@ private:
     uint32 _summarySeconds;     // visible auto-leave countdown (default 30)
     uint32 _deathEndsRunMode;   // 0 = end on WIPE, 1 = end on ANY death (default 0)
     uint32 _fallbackSeconds;    // C++ safety teleport threshold, should be > _summarySeconds (default 40)
+    uint32 _runCredit;          // kill credit per completed run for the call board's run quests (default 402451, 0 = off)
 
     // Data
     std::vector<DungeonInfo> _dungeons;

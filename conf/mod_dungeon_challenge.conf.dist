@@ -77,6 +77,14 @@
 #       Should be greater than SummarySeconds.
 #       Default: 40
 #
+#   DungeonChallenge.RunCredit
+#       A completed run (the final boss down, in time or not) gives every
+#       participant still in the instance one kill credit of this creature.
+#       The call board's run quests count it (mod-hero-call-board: the daily
+#       "complete a run" and the weekly "complete 5 runs", credit creature
+#       402451). 0 = no credit.
+#       Default: 402451
+#
 
 DungeonChallenge.Enable = 1
 DungeonChallenge.AffixPercentage = 15
@@ -94,3 +102,4 @@ DungeonChallenge.ParagonXPPerLevel = 10
 DungeonChallenge.SummarySeconds = 30
 DungeonChallenge.DeathEndsRunMode = 0
 DungeonChallenge.FallbackSeconds = 40
+DungeonChallenge.RunCredit = 402451

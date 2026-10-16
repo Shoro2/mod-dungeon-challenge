@@ -44,6 +44,7 @@ DungeonChallengeMgr::DungeonChallengeMgr()
     , _summarySeconds(30)
     , _deathEndsRunMode(0)
     , _fallbackSeconds(40)
+    , _runCredit(402451)
     , _rng(std::random_device{}())
 {
 }
@@ -69,6 +70,7 @@ void DungeonChallengeMgr::LoadConfig(bool /*reload*/)
     _summarySeconds = sConfigMgr->GetOption<uint32>("DungeonChallenge.SummarySeconds", 30);
     _deathEndsRunMode = sConfigMgr->GetOption<uint32>("DungeonChallenge.DeathEndsRunMode", 0);
     _fallbackSeconds = sConfigMgr->GetOption<uint32>("DungeonChallenge.FallbackSeconds", 40);
+    _runCredit = sConfigMgr->GetOption<uint32>("DungeonChallenge.RunCredit", 402451);
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Configuration loaded (Enabled: {}, MaxDifficulty: {}, AffixPct: {}%, ParagonXP/Level: {})",
         _enabled ? "Yes" : "No", _maxDifficulty, _affixPercentage, _paragonXPPerLevel);
@@ -484,6 +486,18 @@ void DungeonChallengeMgr::CompleteRun(ChallengeRun* run)
     // Persist leaderboard/history/rewards while still in COMPLETED state (their guards require it).
     SaveRunToLeaderboard(run);
     DistributeRewards(run);
+
+    // The call board's run quests (daily and weekly, mod-hero-call-board) count one kill credit per completed run,
+    // in time or not, for every participant still in the run's instance.
+    if (_runCredit)
+    {
+        for (auto const& guid : run->participants)
+        {
+            Player* player = ObjectAccessor::FindPlayer(guid);
+            if (player && player->IsInWorld() && player->GetInstanceId() == run->instanceId)
+                player->KilledMonsterCredit(_runCredit);
+        }
+    }
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Run completed! Instance: {}, Time: {}s, Deaths: {}, Penalty: {}s",
         run->instanceId, run->elapsedTime, run->deathCount, run->penaltyTime);
