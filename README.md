@@ -4,15 +4,19 @@ A **Mythic+ inspired dungeon challenge system** for AzerothCore (WoW 3.3.5a WotL
 
 ## Features
 
-- **Difficulty Levels 1-20**: Progressively scales mob HP and damage
-- **Timer System**: Each dungeon has an individual timer with time pressure
-- **Random Affixes**: ~5% of all mobs in the dungeon receive special abilities
-- **10 Different Affixes**: Bolstering, Raging, Sanguine, Necrotic, Bursting, Explosive, Fortified, Volcanic, Storming, Inspiring
-- **Leaderboard**: Global ranking per dungeon and difficulty level
-- **Gold Rewards**: Scales with difficulty, bonus for in-time completions
-- **Death Penalty**: Each death costs time (configurable, default 15 seconds)
-- **Keystone System**: Requires keystone item activation inside the dungeon
-- **NPC-Based UI**: No addon required — everything via gossip menus
+- **Difficulty levels 1-100**: mob health and damage grow per level; per-dungeon boss and trash factors on top
+  (`dungeon_challenge_scale`)
+- **Timer per dungeon** with a death penalty (configurable)
+- **Affixes as data** (`dungeon_challenge_affix`): mob affixes on a share of the mobs (one more every 10 levels),
+  run affixes that act on the whole instance, and a **weekly rotation** of the run affixes (Lightning Sphere,
+  Entangling Roots, Enrage)
+- **Rewards**: gold and Paragon XP by formula, plus items per level band (`dungeon_challenge_reward`); doubled in time
+- **Records**: leaderboard, history, bests, per-boss snapshots with the **fight time** of each boss
+- **Runs survive a restart**: a run in progress is saved (`dungeon_challenge_active`) and comes back when a
+  participant enters its instance; the downtime counts against the timer
+- **Low-level dungeons lifted to level 80** (`dungeon_challenge_scale.uplift_level`), e.g. the Turtle dungeons
+- **UI**: the Dungeon Challenge Stone opens an AIO window (dungeon/level choice, leaderboard, records), a run
+  tracker, a mob counter HUD and a run-end summary; the NPC 500000 offers the same through gossip menus
 
 ## Supported Dungeons
 
@@ -163,48 +167,61 @@ Via the NPC:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `DungeonChallenge.Enable` | 1 | Enable/disable the module |
-| `DungeonChallenge.AffixPercentage` | 5 | % of mobs with random affixes |
-| `DungeonChallenge.MaxDifficulty` | 20 | Highest selectable level |
+| `DungeonChallenge.AffixPercentage` | 15 | % of mobs that get all mob affixes of the level |
+| `DungeonChallenge.MaxDifficulty` | 100 | Highest selectable level |
 | `DungeonChallenge.HealthMultiplierPerLevel` | 15 | HP bonus per level in % |
 | `DungeonChallenge.DamageMultiplierPerLevel` | 8 | Damage bonus per level in % |
 | `DungeonChallenge.TimerBaseMinutes` | 30 | Fallback timer if no dungeon-specific timer |
 | `DungeonChallenge.LootBonusPerLevel` | 50000 | Gold per level in copper (50000 = 5 gold) |
-| `DungeonChallenge.NpcEntry` | 500000 | Creature entry ID of the NPC |
 | `DungeonChallenge.AnnounceOnLogin` | 1 | Welcome message on login |
 | `DungeonChallenge.DeathPenaltySeconds` | 15 | Time penalty per death in seconds |
+| `DungeonChallenge.GameObjectEntry` | 500002 | The Dungeon Challenge Stone |
+| `DungeonChallenge.ParagonXPPerLevel` | 10 | Paragon XP per level (doubled in time) |
 | `DungeonChallenge.SummarySeconds` | 30 | Run-summary auto-leave countdown in seconds |
 | `DungeonChallenge.DeathEndsRunMode` | 0 | 0 = wipe ends run, 1 = any death ends run |
 | `DungeonChallenge.FallbackSeconds` | 40 | Server safety teleport-home/reset (no add-on) |
-| `DungeonChallenge.KeystoneEnabled` | 1 | Enable keystone item system |
-| `DungeonChallenge.KeystoneBuyCooldownMinutes` | 1440 | Keystone purchase cooldown (minutes) |
+| `DungeonChallenge.RunCredit` | 402451 | Kill credit per completed run (call board quests), 0 = off |
+| `DungeonChallenge.WeeklyAffixCount` | 2 | Weekly affixes drawn per week from the rotating pool |
+| `DungeonChallenge.RestoreWindowMinutes` | 120 | A saved run older than this is not restored (0 = no limit) |
+| `DungeonChallenge.Uplift.DiminishingThreshold` | 10000 | Uplifted spell damage: extra above this grows slower |
+| `DungeonChallenge.Uplift.DiminishingExponent` | 0.975 | ... as (extra - threshold) ^ exponent |
+
+## Tuning tables (world DB)
+
+| Table | What it tunes |
+|-------|---------------|
+| `dungeon_challenge_affix` | each affix: on/off, minimum level, mob or run affix, weekly rotation, two numbers (`value1`/`value2`, see the seed SQL) |
+| `dungeon_challenge_scale` | per dungeon: trash and boss health/damage factors, and the uplift level for low-level dungeons |
+| `dungeon_challenge_reward` | items per level band for a completed run (count doubled in time) |
+| `dungeon_challenge_boss_entry` | creatures that count as a boss below rank 3 |
+
+`.dchallenge reload` reloads them; `.dchallenge affixes [level]` shows this week's rotation.
+GM tools: `.dchallenge status` (the run and the selected creature's scaling), `.dchallenge scale` (live factors),
+`.dchallenge week` (pin a rotation week), `.dchallenge force` (fire a run affix now), `.dchallenge start`,
+`.dchallenge forget` (drop the run from memory as a restart does).
 
 ## Difficulty Scaling
 
-| Level | HP Multiplier | DMG Multiplier | Active Affixes |
-|-------|--------------|----------------|----------------|
-| 1 | 1.15x | 1.08x | 0 |
-| 2 | 1.30x | 1.16x | 3 (Bolstering, Raging, Fortified) |
-| 5 | 1.75x | 1.40x | 3 |
-| 7 | 2.05x | 1.56x | 5 (+Bursting, Explosive) |
-| 10 | 2.50x | 1.80x | 7 (+Sanguine, Necrotic) |
-| 14 | 3.10x | 2.12x | 9 (+Volcanic, Storming) |
-| 15 | 3.25x | 2.20x | 10 (+Inspiring) |
-| 20 | 4.00x | 2.60x | 10 |
+Health x (1 + `HealthMultiplierPerLevel`% x level) and damage x (1 + `DamageMultiplierPerLevel`% x level), times
+the dungeon's boss or trash factor. Mob heals between scaled mobs scale with the health factor.
 
-## Affix Descriptions
+## Affixes
 
-| Affix | Effect | Tip |
-|-------|--------|-----|
-| **Bolstering** | Mob death buffs nearby allies (+20% HP/DMG) | Kill mobs simultaneously |
-| **Raging** | Enrage below 30% HP (+50% DMG) | Focus quickly |
-| **Sanguine** | Leaves healing zone for other mobs | Pull mobs out of the zone |
-| **Necrotic** | Stacking healing reduction | Tank must kite |
-| **Bursting** | AoE damage on mob death | Don't kill too many at once |
-| **Explosive** | Spawns explosive orbs | Destroy orbs immediately |
-| **Fortified** | +40% HP, +20% DMG | Plan more time for trash |
-| **Volcanic** | Fire zones under ranged players | Keep moving |
-| **Storming** | Moving tornadoes | Dodge them |
-| **Inspiring** | Allies immune to CC | Kill the inspiring mob first |
+| Id | Affix | Kind | From level | Effect |
+|----|-------|------|-----------|--------|
+| 1 | Call for Help | mob | 10 | Calls allies within 30 yd on pull |
+| 2 | Speedy | mob | 20 | +100% movement, +10% attack speed |
+| 3 | Big Boy | mob | 30 | +50% health, bigger |
+| 4 | Immolation Aura | mob | 40 | Fire damage (level x 80) to players within 8 yd |
+| 5 | CC Immunity | mob | 50 | Immune to crowd control |
+| 6 | Heavy Hits | mob | 60 | +33% damage |
+| 7 | Lil' Bro | mob | 70 | Splits 1 -> 2 -> 4 on death |
+| 8 | Damage Reduce | mob | 80 | Allies within 30 yd take 25% less damage |
+| 9 | Bigger Boy | mob | 90 | +50% health, bigger, +10% damage |
+| 10 | Hell Touched | mob | 100 | +666 damage per hit, stat debuff |
+| 11 | Lightning Sphere | run, weekly | 10 | Spheres appear and shock every player within 100 yd until killed |
+| 12 | Entangling Roots | run, weekly | 10 | A nearby enemy now and then roots a player |
+| 13 | Enrage | run, weekly | 10 | Enemies in combat now and then enrage |
 
 ## Customizing Dungeon Timers
 

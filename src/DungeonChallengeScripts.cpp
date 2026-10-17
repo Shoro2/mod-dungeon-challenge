@@ -8,6 +8,18 @@
 #include "ScriptedGossip.h"
 #include "SpellAuraEffects.h"
 #include "ParagonUtils.h"
+#include "ScriptedCreature.h"
+#include "CellImpl.h"
+#include "GridNotifiers.h"
+#include "Chat.h"
+
+using namespace Acore::ChatCommands;
+
+// "m:ss" for chat lines.
+static std::string FormatDuration(uint32 seconds)
+{
+    return fmt::format("{}:{:02}", seconds / 60, seconds % 60);
+}
 
 // ============================================================================
 // WorldScript - Configuration Loading & Startup
@@ -26,11 +38,12 @@ public:
     void OnStartup() override
     {
         sDungeonChallengeMgr->LoadDungeonData();
-        sDungeonChallengeMgr->LoadAffixData();
-        sDungeonChallengeMgr->LoadBossGroups();
+        sDungeonChallengeMgr->LoadTuningTables();
+        sDungeonChallengeMgr->LoadExpectedPlayerHealth();
         sDungeonChallengeMgr->LoadLeaderboard();
         sDungeonChallengeMgr->LoadSpellOverrides();
         sDungeonChallengeMgr->LoadSnapshots();
+        sDungeonChallengeMgr->CleanupActiveRuns();
 
         // Clean up stale pending challenges from previous sessions
         CharacterDatabase.DirectExecute(
@@ -355,7 +368,22 @@ public:
         }
 
         if (!pending)
+        {
+            // A participant entering (or logging in to) the instance of a run
+            // saved before a restart or unload gets it back (idea 10).
+            if (ChallengeRun* restored = sDungeonChallengeMgr->TryRestoreRun(player, map))
+            {
+                DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(restored->mapId);
+                uint32 left = restored->timerDuration > restored->GetEffectiveElapsed()
+                    ? restored->timerDuration - restored->GetEffectiveElapsed() : 0;
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "|cff00ff00[Dungeon Challenge]|r Run restored: |cffff8000{}|r Level |cffff8000{}|r | "
+                    "Time left: |cffffff00{}|r | Bosses: {}/{} | Deaths: {}",
+                    info ? info->name : "Unknown", restored->difficulty, FormatDuration(left),
+                    restored->bossesKilled, restored->totalBosses, restored->deathCount);
+            }
             return;
+        }
 
         uint32 instanceId = player->GetInstanceId();
 
@@ -527,6 +555,7 @@ public:
 
         run->deathCount++;
         run->penaltyTime += sDungeonChallengeMgr->GetDeathPenalty();
+        sDungeonChallengeMgr->SaveActiveRun(run);
 
         // Notify all participants (group or solo)
         auto notifyDeath = [&](Player* p)
@@ -663,9 +692,7 @@ private:
 
 static bool IsChallengeBoss(Creature const* creature)
 {
-    return creature->GetCreatureTemplate()->rank >= 3
-        || creature->isWorldBoss()
-        || creature->IsDungeonBoss();
+    return sDungeonChallengeMgr->IsChallengeBoss(creature);
 }
 
 // ============================================================================
@@ -691,6 +718,7 @@ public:
         creatureData->processed = false;
         creatureData->scaled = false;
         creatureData->baseCreateHealth = 0;
+        creatureData->originalLevel = 0;
         if (!creatureData->affixes.empty())
             creatureData->affixesApplied = false;
     }
@@ -727,6 +755,8 @@ public:
         {
             sDungeonChallengeMgr->ProcessCreature(creature, map);
         }
+
+        sDungeonChallengeMgr->UpdateCreatureRunAffixes(run, creature, diff);
 
         // --- MOB RESPAWN: non-boss, non-affix mobs respawn at original position when pulled ---
         // Placed spawns only (spawn id != 0). A summon has no original position:
@@ -856,6 +886,7 @@ public:
             if (victim)
             {
                 creatureData->hasCalled = true;
+                float const callRange = sDungeonChallengeMgr->GetAffixValue(AFFIX_CALL_FOR_HELP, 1, 30.0f);
                 for (auto const& pair : map->GetCreatureBySpawnIdStore())
                 {
                     Creature* ally = pair.second;
@@ -865,7 +896,7 @@ public:
                         continue;
                     if (ally->GetCreatureTemplate()->faction == 35)
                         continue;
-                    if (ally->GetDistance(creature) > 30.0f)
+                    if (ally->GetDistance(creature) > callRange)
                         continue;
 
                     ally->AI()->AttackStart(victim);
@@ -887,14 +918,15 @@ public:
             if (creatureData->immolationTimer >= 2000)
             {
                 creatureData->immolationTimer -= 2000;
-                uint32 damage = run->difficulty * 80;
+                uint32 damage = uint32(run->difficulty * sDungeonChallengeMgr->GetAffixValue(AFFIX_IMMOLATION, 1, 80.0f));
+                float const range = sDungeonChallengeMgr->GetAffixValue(AFFIX_IMMOLATION, 2, 8.0f);
 
                 Map::PlayerList const& players = map->GetPlayers();
                 for (auto const& ref : players)
                 {
                     if (Player* player = ref.GetSource())
                     {
-                        if (player->IsAlive() && creature->GetDistance(player) <= 8.0f)
+                        if (player->IsAlive() && creature->GetDistance(player) <= range)
                             player->EnvironmentalDamage(DAMAGE_FIRE, damage);
                     }
                 }
@@ -1006,8 +1038,13 @@ public:
                 run->bossesKilled++;
                 bool isFinalBoss = run->AllBossesKilled();
 
-                DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(run->mapId);
                 std::string bossName = creature->GetName();
+
+                // Combat time (idea 8): from the first player hit to the kill.
+                uint32 combatTime = 0;
+                if (auto* bossData = creature->CustomData.Get<CreatureChallengeData>("mod-dungeon-challenge"))
+                    if (bossData->engageTimeMs)
+                        combatTime = uint32((uint64(GameTime::GetGameTimeMS().count()) - bossData->engageTimeMs) / IN_MILLISECONDS);
 
                 Map::PlayerList const& players = map->GetPlayers();
                 for (auto const& ref : players)
@@ -1015,13 +1052,18 @@ public:
                     if (Player* player = ref.GetSource())
                     {
                         ChatHandler(player->GetSession()).PSendSysMessage(
-                            "|cff00ff00[Dungeon Challenge]|r Boss |cffff8000{}|r defeated! ({}/{})",
-                            bossName, run->bossesKilled, run->totalBosses);
+                            "|cff00ff00[Dungeon Challenge]|r Boss |cffff8000{}|r defeated! ({}/{}) - fight |cffffff00{}|r",
+                            bossName, run->bossesKilled, run->totalBosses, FormatDuration(combatTime));
                     }
                 }
 
+                run->lastBossName = bossName;
+                run->lastBossCombatTime = combatTime;
+
                 // Save boss kill snapshot
-                sDungeonChallengeMgr->SaveBossKillSnapshot(run, creature, isFinalBoss, isFinalBoss && !run->IsTimedOut());
+                sDungeonChallengeMgr->SaveBossKillSnapshot(run, creature, isFinalBoss, isFinalBoss && !run->IsTimedOut(), combatTime);
+                if (!isFinalBoss)
+                    sDungeonChallengeMgr->SaveActiveRun(run);
 
                 // Check completion
                 if (isFinalBoss)
@@ -1064,7 +1106,8 @@ private:
         float o = creature->GetOrientation();
 
         // Calculate HP for copies: 10% of the creature's max health
-        uint32 copyHealth = std::max(1u, static_cast<uint32>(creature->GetMaxHealth() * 0.1f));
+        uint32 copyHealth = std::max(1u, static_cast<uint32>(creature->GetMaxHealth()
+            * sDungeonChallengeMgr->GetAffixValue(AFFIX_LIL_BRO, 1, 0.1f)));
 
         // Find a valid target: dead creature may have lost its victim
         Unit* target = creature->GetVictim();
@@ -1093,8 +1136,9 @@ private:
             copyData->scaled = true;
             copyData->affixesApplied = true;
 
-            // Apply difficulty damage scaling
-            copyData->extraDamageMultiplier = sDungeonChallengeMgr->GetDamageMultiplier(run->difficulty);
+            // Apply difficulty damage scaling (level and dungeon factor, as the parent)
+            copyData->extraDamageMultiplier = sDungeonChallengeMgr->GetCreatureDamageMultiplier(copy, run->difficulty);
+            copyData->healthMultiplier = parentData->healthMultiplier;
 
             // Only original (generation 0) drops loot; all splits don't
             copyData->noLoot = true;
@@ -1151,7 +1195,7 @@ public:
             {
                 if (Player* playerTarget = target->ToPlayer())
                 {
-                    playerTarget->EnvironmentalDamage(DAMAGE_FIRE, 666);
+                    playerTarget->EnvironmentalDamage(DAMAGE_FIRE, uint32(sDungeonChallengeMgr->GetAffixValue(AFFIX_HELL_TOUCHED, 1, 666.0f)));
                     playerTarget->CastSpell(playerTarget, SPELL_AFFIX_HELL_TOUCHED_DEBUFF, true);
                 }
             }
@@ -1186,6 +1230,10 @@ public:
         {
             auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
 
+            // An uplifted creature's spells grow to its new level (idea 9).
+            if (creatureData->originalLevel)
+                damage = sDungeonChallengeMgr->ScaleUpliftedSpellDamage(creature, damage);
+
             // Check for spell-specific override first
             if (spellInfo)
             {
@@ -1205,7 +1253,7 @@ public:
             {
                 if (Player* playerTarget = target->ToPlayer())
                 {
-                    playerTarget->EnvironmentalDamage(DAMAGE_FIRE, 666);
+                    playerTarget->EnvironmentalDamage(DAMAGE_FIRE, uint32(sDungeonChallengeMgr->GetAffixValue(AFFIX_HELL_TOUCHED, 1, 666.0f)));
                     playerTarget->CastSpell(playerTarget, SPELL_AFFIX_HELL_TOUCHED_DEBUFF, true);
                 }
             }
@@ -1243,8 +1291,15 @@ public:
         // multiplying them here as well used to give mob HoTs the damage factor.
         if (spellInfo && (spellInfo->HasAura(SPELL_AURA_PERIODIC_HEAL) || spellInfo->HasAura(SPELL_AURA_OBS_MOD_HEALTH)))
             return;
+        // The Entangling Roots run affix hurts as cast; its caster's factor does not apply.
+        if (spellInfo && spellInfo->Id == SPELL_ENTANGLING_ROOTS)
+            return;
 
         auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+
+        // An uplifted creature's DoTs grow to its new level (idea 9).
+        if (creatureData->originalLevel)
+            damage = uint32(sDungeonChallengeMgr->ScaleUpliftedSpellDamage(creature, int32(std::min<uint32>(damage, std::numeric_limits<int32>::max()))));
 
         // Check for spell-specific DoT override
         if (spellInfo)
@@ -1292,8 +1347,39 @@ public:
         if (first->IsCharmedOwnedByPlayerOrPlayer() || second->IsCharmedOwnedByPlayerOrPlayer())
             return;
 
-        heal = static_cast<uint32>(std::min<double>(double(heal) * sDungeonChallengeMgr->GetHealthMultiplier(run->difficulty),
-            double(std::numeric_limits<uint32>::max())));
+        // Each creature carries its own factor (level x the dungeon's boss or
+        // trash factor); the order of the two units is not reliable, so the
+        // larger one wins.
+        float const factor = std::max(firstData->healthMultiplier, secondData->healthMultiplier);
+        heal = static_cast<uint32>(std::min<double>(double(heal) * factor, double(std::numeric_limits<uint32>::max())));
+    }
+
+    // Combat time (idea 8): a boss's clock starts at the first hit from a
+    // player or a player's unit, and stops on an evade.
+    void OnDamage(Unit* attacker, Unit* victim, uint32& /*damage*/) override
+    {
+        Creature* boss = victim ? victim->ToCreature() : nullptr;
+        if (!boss || !attacker || !sDungeonChallengeMgr->IsEnabled())
+            return;
+        Map* map = boss->GetMap();
+        if (!map || !map->IsDungeon())
+            return;
+        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(map->GetInstanceId());
+        if (!run || run->state != CHALLENGE_STATE_RUNNING || !sDungeonChallengeMgr->IsChallengeBoss(boss))
+            return;
+        if (!attacker->GetCharmerOrOwnerPlayerOrPlayerItself())
+            return;
+
+        auto* data = boss->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+        if (!data->engageTimeMs)
+            data->engageTimeMs = uint64(GameTime::GetGameTimeMS().count());
+    }
+
+    void OnUnitEnterEvadeMode(Unit* unit, uint8 /*evadeReason*/) override
+    {
+        if (Creature* creature = unit ? unit->ToCreature() : nullptr)
+            if (auto* data = creature->CustomData.Get<CreatureChallengeData>("mod-dungeon-challenge"))
+                data->engageTimeMs = 0;
     }
 };
 
@@ -1356,6 +1442,7 @@ public:
 
         // Update elapsed time
         sDungeonChallengeMgr->UpdateRun(run, diff);
+        sDungeonChallengeMgr->UpdateRunAffixes(run, map, diff);
 
         // Periodic timer announcements
         uint32 effectiveElapsed = run->GetEffectiveElapsed();
@@ -1479,11 +1566,269 @@ private:
 };
 
 // ============================================================================
+// Lightning Sphere (run affix, NPC 500100): rooted and passive; every 1.2 s it
+// pulses 1.5-5.25 % of each player's maximum health to every player within
+// 100 yd until it is killed or despawns after 60 s (after silviu20092's
+// mod-mythic-plus, MIT).
+// ============================================================================
+
+class npc_dc_lightning_sphere : public CreatureScript
+{
+public:
+    npc_dc_lightning_sphere() : CreatureScript("npc_dc_lightning_sphere") { }
+
+    struct npc_dc_lightning_sphereAI : public ScriptedAI
+    {
+        explicit npc_dc_lightning_sphereAI(Creature* creature) : ScriptedAI(creature) { }
+
+        uint32 pulseTimer = 1200;
+
+        void Reset() override
+        {
+            me->SetReactState(REACT_PASSIVE);
+            me->SetControlled(true, UNIT_STATE_ROOT);
+        }
+
+        void UpdateAI(uint32 diff) override
+        {
+            if (pulseTimer > diff)
+            {
+                pulseTimer -= diff;
+                return;
+            }
+            pulseTimer = 1200;
+
+            ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(me->GetInstanceId());
+            if (!run || run->state != CHALLENGE_STATE_RUNNING)
+                return;
+
+            std::list<Player*> players;
+            Acore::AnyPlayerInObjectRangeCheck check(me, 100.0f);
+            Acore::PlayerListSearcher<Acore::AnyPlayerInObjectRangeCheck> searcher(me, players, check);
+            Cell::VisitObjects(me, searcher, 100.0f);
+
+            me->CastSpell(me, SPELL_LIGHTNING_VISUAL, true);
+            for (Player* player : players)
+            {
+                if (!player->IsAlive() || player->IsGameMaster())
+                    continue;
+                uint32 damage = uint32(frand(1.5f, 5.25f) / 100.0f * player->GetMaxHealth());
+                Unit::DealDamage(me, player, damage, nullptr, SPELL_DIRECT_DAMAGE, SPELL_SCHOOL_MASK_NATURE, nullptr, false, true);
+                me->SendAttackStateUpdate(HITINFO_NO_ANIMATION, player, 1, SPELL_SCHOOL_MASK_NATURE, damage, 0, 0, VICTIMSTATE_HIT, 0);
+            }
+        }
+    };
+
+    CreatureAI* GetAI(Creature* creature) const override
+    {
+        return new npc_dc_lightning_sphereAI(creature);
+    }
+};
+
+// ============================================================================
+// Command script: .dchallenge
+// ============================================================================
+
+class DungeonChallengeCommandScript : public CommandScript
+{
+public:
+    DungeonChallengeCommandScript() : CommandScript("DungeonChallengeCommandScript") { }
+
+    ChatCommandTable GetCommands() const override
+    {
+        static ChatCommandTable dchallengeTable =
+        {
+            { "affixes", HandleAffixes, SEC_PLAYER,        Console::Yes },
+            { "status",  HandleStatus,  SEC_GAMEMASTER,    Console::No  },
+            { "reload",  HandleReload,  SEC_ADMINISTRATOR, Console::Yes },
+            { "scale",   HandleScale,   SEC_ADMINISTRATOR, Console::Yes },
+            { "week",    HandleWeek,    SEC_ADMINISTRATOR, Console::Yes },
+            { "force",   HandleForce,   SEC_ADMINISTRATOR, Console::No  },
+            { "start",   HandleStart,   SEC_ADMINISTRATOR, Console::No  },
+            { "forget",  HandleForget,  SEC_ADMINISTRATOR, Console::No  },
+        };
+        static ChatCommandTable commandTable =
+        {
+            { "dchallenge", dchallengeTable },
+        };
+        return commandTable;
+    }
+
+    static std::string AffixNames(std::vector<DungeonChallengeAffix> const& affixes)
+    {
+        std::string text;
+        for (DungeonChallengeAffix affix : affixes)
+        {
+            AffixInfo const* info = sDungeonChallengeMgr->GetAffixInfo(affix);
+            if (!text.empty())
+                text += ", ";
+            text += info ? info->name : fmt::format("#{}", uint32(affix));
+        }
+        return text.empty() ? "none" : text;
+    }
+
+    // This week's rotation and what a run at the given level gets.
+    static bool HandleAffixes(ChatHandler* handler, Optional<uint32> level)
+    {
+        uint32 week = sDungeonChallengeMgr->GetCurrentWeek();
+        handler->PSendSysMessage("Dungeon Challenge week {}: weekly affixes: {}", week,
+            AffixNames(sDungeonChallengeMgr->GetWeeklyAffixes(week)));
+        if (level)
+            handler->PSendSysMessage("Level {}: {}", *level, AffixNames(sDungeonChallengeMgr->GetAffixesForDifficulty(*level, week)));
+        return true;
+    }
+
+    // The run of the GM's instance, and the scaling of the selected creature.
+    static bool HandleStatus(ChatHandler* handler)
+    {
+        Player* player = handler->GetSession()->GetPlayer();
+        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(player->GetInstanceId());
+        if (!run || !player->GetMap()->IsDungeon())
+        {
+            handler->SendSysMessage("No Dungeon Challenge run in this instance.");
+            return true;
+        }
+
+        handler->PSendSysMessage("Run: map {} level {} state {}{} | elapsed {} + penalty {}s of {} | bosses {}/{} | deaths {}",
+            run->mapId, run->difficulty, uint32(run->state), run->restored ? " (restored)" : "",
+            FormatDuration(run->elapsedTime), run->penaltyTime, FormatDuration(run->timerDuration),
+            run->bossesKilled, run->totalBosses, run->deathCount);
+        handler->PSendSysMessage("Affixes (week {}): {}", run->affixWeek, AffixNames(run->affixes));
+        if (!run->lastBossName.empty())
+            handler->PSendSysMessage("Last boss: {} - fight {}", run->lastBossName, FormatDuration(run->lastBossCombatTime));
+        DungeonScale const& scale = sDungeonChallengeMgr->GetScale(run->mapId);
+        handler->PSendSysMessage("Dungeon factors: trash health {:.2f} damage {:.2f} | boss health {:.2f} damage {:.2f} | uplift {}",
+            scale.trashHealth, scale.trashDamage, scale.bossHealth, scale.bossDamage, uint32(scale.upliftLevel));
+
+        if (Creature* target = handler->getSelectedCreature())
+        {
+            auto* data = target->CustomData.Get<CreatureChallengeData>("mod-dungeon-challenge");
+            handler->PSendSysMessage("Target {} ({}): boss {} | level {} | health factor {:.2f} | damage factor {:.2f} | max health {} | affixes {}",
+                target->GetName(), target->GetEntry(), sDungeonChallengeMgr->IsChallengeBoss(target) ? "yes" : "no",
+                uint32(target->GetLevel()), data ? data->healthMultiplier : 1.0f, data ? data->extraDamageMultiplier : 1.0f,
+                target->GetMaxHealth(), data ? AffixNames(data->affixes) : "none");
+        }
+        return true;
+    }
+
+    static bool HandleReload(ChatHandler* handler)
+    {
+        sDungeonChallengeMgr->LoadTuningTables();
+        handler->SendSysMessage("Dungeon Challenge: affixes, dungeon factors, rewards and boss tables reloaded (runs in progress keep their affixes).");
+        return true;
+    }
+
+    // Live tuning of a dungeon's factors, until the next reload or restart.
+    static bool HandleScale(ChatHandler* handler, uint32 mapId, float trashHealth, float trashDamage, float bossHealth, float bossDamage)
+    {
+        DungeonScale scale = sDungeonChallengeMgr->GetScale(mapId);
+        scale.trashHealth = std::max(0.01f, trashHealth);
+        scale.trashDamage = std::max(0.0f, trashDamage);
+        scale.bossHealth  = std::max(0.01f, bossHealth);
+        scale.bossDamage  = std::max(0.0f, bossDamage);
+        sDungeonChallengeMgr->SetScale(mapId, scale);
+        handler->PSendSysMessage("Dungeon Challenge map {}: trash health {:.2f} damage {:.2f}, boss health {:.2f} damage {:.2f} until the next reload (new runs and newly scaled creatures).",
+            mapId, scale.trashHealth, scale.trashDamage, scale.bossHealth, scale.bossDamage);
+        return true;
+    }
+
+    // The next roll of a run affix in the GM's run fires now (tests, demos).
+    static bool HandleForce(ChatHandler* handler, uint32 affixId)
+    {
+        Player* player = handler->GetSession()->GetPlayer();
+        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(player->GetInstanceId());
+        if (!run || run->state != CHALLENGE_STATE_RUNNING)
+        {
+            handler->SendSysMessage("No running Dungeon Challenge run in this instance.");
+            return true;
+        }
+        DungeonChallengeAffix affix = DungeonChallengeAffix(affixId);
+        AffixInfo const* info = sDungeonChallengeMgr->GetAffixInfo(affix);
+        if (!info || info->kind != AFFIX_KIND_RUN || !run->HasAffix(affix))
+        {
+            handler->PSendSysMessage("Affix {} is not a run affix of this run.", affixId);
+            return true;
+        }
+        run->forcedAffix = affix;
+        handler->PSendSysMessage("Forced: {} fires at its next check.", info->name);
+        return true;
+    }
+
+    // Starts a run for the GM (and the GM's group) as the NPC does: heroic,
+    // teleport to the entrance, the run begins on entry.
+    static bool HandleStart(ChatHandler* handler, uint32 mapId, uint32 level)
+    {
+        Player* player = handler->GetSession()->GetPlayer();
+        DungeonInfo const* info = sDungeonChallengeMgr->GetDungeonInfo(mapId);
+        if (!info || !level || level > sDungeonChallengeMgr->GetMaxDifficulty())
+        {
+            handler->SendSysMessage("Unknown or disabled dungeon, or a level out of range.");
+            return true;
+        }
+        Group* group = player->GetGroup();
+        if (group && group->GetMembersCount() > 5)
+        {
+            handler->SendSysMessage("Maximum of 5 players.");
+            return true;
+        }
+
+        if (group)
+            group->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
+        else
+            player->SetDungeonDifficulty(DUNGEON_DIFFICULTY_HEROIC);
+        player->SendDungeonDifficulty(group != nullptr);
+
+        if (group)
+        {
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                if (Player* member = ref->GetSource())
+                    member->TeleportTo(mapId, info->entranceX, info->entranceY, info->entranceZ, info->entranceO);
+        }
+        else
+            player->TeleportTo(mapId, info->entranceX, info->entranceY, info->entranceZ, info->entranceO);
+
+        sDungeonChallengePending->AddPending(player->GetGUID(), mapId, level);
+        handler->PSendSysMessage("Dungeon Challenge {} level {} starting.", info->name, level);
+        return true;
+    }
+
+    // Drops the run of the GM's instance from memory and keeps its saved row,
+    // as a restart does: the next participant to enter brings it back.
+    static bool HandleForget(ChatHandler* handler)
+    {
+        Player* player = handler->GetSession()->GetPlayer();
+        ChallengeRun* run = sDungeonChallengeMgr->GetChallengeRun(player->GetInstanceId());
+        if (!run || run->state != CHALLENGE_STATE_RUNNING)
+        {
+            handler->SendSysMessage("No running Dungeon Challenge run in this instance.");
+            return true;
+        }
+        sDungeonChallengeMgr->SaveActiveRun(run);
+        sDungeonChallengeMgr->RemoveChallengeRun(player->GetInstanceId());
+        handler->SendSysMessage("Run forgotten in memory; its saved row stays.");
+        return true;
+    }
+
+    // Pin the rotation to a week number for previews and tests; 0 = the real
+    // week again. Not saved; new runs take the pinned week's affixes.
+    static bool HandleWeek(ChatHandler* handler, uint32 week)
+    {
+        sDungeonChallengeMgr->SetWeekPin(week);
+        uint32 current = sDungeonChallengeMgr->GetCurrentWeek();
+        handler->PSendSysMessage("Dungeon Challenge rotation week {}{}: weekly affixes: {}", current,
+            week ? " (pinned)" : "", AffixNames(sDungeonChallengeMgr->GetWeeklyAffixes(current)));
+        return true;
+    }
+};
+
+// ============================================================================
 // Registration
 // ============================================================================
 
 void AddSC_dungeon_challenge_scripts()
 {
+    new npc_dc_lightning_sphere();
+    new DungeonChallengeCommandScript();
     new DungeonChallengeWorldScript();
     new DungeonChallengePlayerScript();
     new DungeonChallengeCreatureScript();

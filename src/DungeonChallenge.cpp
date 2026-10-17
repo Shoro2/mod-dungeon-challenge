@@ -6,10 +6,16 @@
 #include "MapMgr.h"
 #include "GameTime.h"
 #include "TemporarySummon.h"
+#include "Mail.h"
+#include "Item.h"
+#include "CellImpl.h"
+#include "GridNotifiers.h"
 
 #include <algorithm>
 #include <limits>
 #include <list>
+#include <sstream>
+#include <cmath>
 
 namespace
 {
@@ -48,6 +54,10 @@ DungeonChallengeMgr::DungeonChallengeMgr()
     , _deathEndsRunMode(0)
     , _fallbackSeconds(40)
     , _runCredit(402451)
+    , _weeklyAffixCount(2)
+    , _restoreWindowMinutes(120)
+    , _upliftDrThreshold(10000.0f)
+    , _upliftDrExponent(0.975f)
     , _rng(std::random_device{}())
 {
 }
@@ -74,6 +84,10 @@ void DungeonChallengeMgr::LoadConfig(bool /*reload*/)
     _deathEndsRunMode = sConfigMgr->GetOption<uint32>("DungeonChallenge.DeathEndsRunMode", 0);
     _fallbackSeconds = sConfigMgr->GetOption<uint32>("DungeonChallenge.FallbackSeconds", 40);
     _runCredit = sConfigMgr->GetOption<uint32>("DungeonChallenge.RunCredit", 402451);
+    _weeklyAffixCount = sConfigMgr->GetOption<uint32>("DungeonChallenge.WeeklyAffixCount", 2);
+    _restoreWindowMinutes = sConfigMgr->GetOption<uint32>("DungeonChallenge.RestoreWindowMinutes", 120);
+    _upliftDrThreshold = sConfigMgr->GetOption<float>("DungeonChallenge.Uplift.DiminishingThreshold", 10000.0f);
+    _upliftDrExponent = sConfigMgr->GetOption<float>("DungeonChallenge.Uplift.DiminishingExponent", 0.975f);
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Configuration loaded (Enabled: {}, MaxDifficulty: {}, AffixPct: {}%, ParagonXP/Level: {})",
         _enabled ? "Yes" : "No", _maxDifficulty, _affixPercentage, _paragonXPPerLevel);
@@ -138,22 +152,139 @@ void DungeonChallengeMgr::LoadDungeonData()
 void DungeonChallengeMgr::LoadAffixData()
 {
     _affixes.clear();
-    // Every 10 levels adds +1 affix to the pool.
-    // Selected mobs receive ALL available affixes for the current difficulty.
+
+    // World `dungeon_challenge_affix` (01_dungeon_challenge_mythic_ideas.sql).
+    // Rows with an unknown id are skipped: the behaviour of an affix is code.
+    if (QueryResult result = WorldDatabase.Query(
+        "SELECT affix_id, name, description, min_level, kind, weekly, enabled, value1, value2, spell_id "
+        "FROM dungeon_challenge_affix ORDER BY affix_id"))
+    {
+        do
+        {
+            Field* fields = result->Fetch();
+            uint32 id = fields[0].Get<uint32>();
+            if (id == AFFIX_NONE || id >= AFFIX_MAX)
+            {
+                LOG_ERROR("module", ">> mod-dungeon-challenge: dungeon_challenge_affix has unknown affix_id {}, skipped.", id);
+                continue;
+            }
+            AffixInfo info;
+            info.id            = DungeonChallengeAffix(id);
+            info.name          = fields[1].Get<std::string>();
+            info.description   = fields[2].Get<std::string>();
+            info.minDifficulty = fields[3].Get<uint32>();
+            info.kind          = fields[4].Get<uint8>() ? AFFIX_KIND_RUN : AFFIX_KIND_MOB;
+            info.weekly        = fields[5].Get<bool>();
+            info.enabled       = fields[6].Get<bool>();
+            info.value1        = fields[7].Get<float>();
+            info.value2        = fields[8].Get<float>();
+            info.spellId       = fields[9].Get<uint32>();
+            _affixes.push_back(info);
+        } while (result->NextRow());
+
+        LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} affixes from database.", _affixes.size());
+        return;
+    }
+
+    // No table rows: the built-in set as it was before the table existed.
+    // Every 10 levels adds +1 affix to the pool; selected mobs receive ALL of them.
     _affixes = {
-        { AFFIX_CALL_FOR_HELP, "Call for Help", "Calls allies within 30y for help when entering combat.", 10 },
-        { AFFIX_SPEEDY,        "Speedy",        "+100% movement speed and +10% attack speed.", 20 },
-        { AFFIX_BIG_BOY,       "Big Boy",       "+50% HP and increased size.", 30 },
-        { AFFIX_IMMOLATION,    "Immolation Aura", "Deals periodic fire damage (Level x 80) to nearby players.", 40 },
-        { AFFIX_CC_IMMUNITY,   "CC Immunity",   "Immune to all crowd control effects.", 50 },
-        { AFFIX_HEAVY_HITS,    "Heavy Hits",    "+33% damage dealt.", 60 },
-        { AFFIX_LIL_BRO,       "Lil' Bro",      "Splits into 2 copies on death (1->2->4), each with -90% HP.", 70 },
-        { AFFIX_DAMAGE_REDUCE, "Damage Reduce", "Allies within 30y take 25% less damage.", 80 },
-        { AFFIX_BIGGER_BOY,    "Bigger Boy",    "Additional +50% HP, increased size and +10% damage.", 90 },
-        { AFFIX_HELL_TOUCHED,  "Hell Touched",  "Deals 666 hellfire damage on hit. Reduces stats by 10% (10s, stacks 10).", 100 },
+        { AFFIX_CALL_FOR_HELP, "Call for Help", "Calls allies within 30y for help when entering combat.", 10, AFFIX_KIND_MOB, false, true, 30.0f, 0.0f, SPELL_AFFIX_CALL_FOR_HELP },
+        { AFFIX_SPEEDY,        "Speedy",        "+100% movement speed and +10% attack speed.", 20, AFFIX_KIND_MOB, false, true, 0.0f, 0.0f, SPELL_AFFIX_SPEEDY },
+        { AFFIX_BIG_BOY,       "Big Boy",       "+50% HP and increased size.", 30, AFFIX_KIND_MOB, false, true, 1.5f, 0.0f, SPELL_AFFIX_BIG_BOY },
+        { AFFIX_IMMOLATION,    "Immolation Aura", "Deals periodic fire damage (Level x 80) to nearby players.", 40, AFFIX_KIND_MOB, false, true, 80.0f, 8.0f, SPELL_AFFIX_IMMOLATION },
+        { AFFIX_CC_IMMUNITY,   "CC Immunity",   "Immune to all crowd control effects.", 50, AFFIX_KIND_MOB, false, true, 0.0f, 0.0f, SPELL_AFFIX_CC_IMMUNITY },
+        { AFFIX_HEAVY_HITS,    "Heavy Hits",    "+33% damage dealt.", 60, AFFIX_KIND_MOB, false, true, 0.0f, 0.0f, SPELL_AFFIX_HEAVY_HITS },
+        { AFFIX_LIL_BRO,       "Lil' Bro",      "Splits into 2 copies on death (1->2->4), each with -90% HP.", 70, AFFIX_KIND_MOB, false, true, 0.1f, 0.0f, SPELL_AFFIX_LIL_BRO },
+        { AFFIX_DAMAGE_REDUCE, "Damage Reduce", "Allies within 30y take 25% less damage.", 80, AFFIX_KIND_MOB, false, true, 0.25f, 30.0f, SPELL_AFFIX_DAMAGE_REDUCE },
+        { AFFIX_BIGGER_BOY,    "Bigger Boy",    "Additional +50% HP, increased size and +10% damage.", 90, AFFIX_KIND_MOB, false, true, 1.5f, 0.0f, SPELL_AFFIX_BIGGER_BOY },
+        { AFFIX_HELL_TOUCHED,  "Hell Touched",  "Deals 666 hellfire damage on hit. Reduces stats by 10% (10s, stacks 10).", 100, AFFIX_KIND_MOB, false, true, 666.0f, 0.0f, SPELL_AFFIX_HELL_TOUCHED },
     };
 
-    LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} affixes.", _affixes.size());
+    LOG_INFO("module", ">> mod-dungeon-challenge: dungeon_challenge_affix is empty, loaded the {} built-in affixes.", _affixes.size());
+}
+
+void DungeonChallengeMgr::LoadScales()
+{
+    _scales.clear();
+
+    QueryResult result = WorldDatabase.Query(
+        "SELECT map_id, trash_health, trash_damage, boss_health, boss_damage, uplift_level FROM dungeon_challenge_scale");
+    if (!result)
+    {
+        LOG_INFO("module", ">> mod-dungeon-challenge: No dungeon scale factors defined.");
+        return;
+    }
+
+    do
+    {
+        Field* fields = result->Fetch();
+        DungeonScale scale;
+        scale.trashHealth = std::max(0.01f, fields[1].Get<float>());
+        scale.trashDamage = std::max(0.0f, fields[2].Get<float>());
+        scale.bossHealth  = std::max(0.01f, fields[3].Get<float>());
+        scale.bossDamage  = std::max(0.0f, fields[4].Get<float>());
+        scale.upliftLevel = fields[5].Get<uint8>();
+        _scales[fields[0].Get<uint32>()] = scale;
+    } while (result->NextRow());
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} dungeon scale rows.", _scales.size());
+}
+
+void DungeonChallengeMgr::LoadRewards()
+{
+    _rewards.clear();
+
+    QueryResult result = WorldDatabase.Query(
+        "SELECT min_level, max_level, item_entry, item_count FROM dungeon_challenge_reward ORDER BY min_level, item_entry");
+    if (!result)
+    {
+        LOG_INFO("module", ">> mod-dungeon-challenge: No item rewards defined.");
+        return;
+    }
+
+    do
+    {
+        Field* fields = result->Fetch();
+        RewardEntry entry;
+        entry.minLevel  = fields[0].Get<uint32>();
+        entry.maxLevel  = fields[1].Get<uint32>();
+        entry.itemEntry = fields[2].Get<uint32>();
+        entry.itemCount = fields[3].Get<uint32>();
+        if (!sObjectMgr->GetItemTemplate(entry.itemEntry) || !entry.itemCount)
+        {
+            LOG_ERROR("module", ">> mod-dungeon-challenge: dungeon_challenge_reward item {} (levels {}-{}) does not exist or has count 0, skipped.",
+                entry.itemEntry, entry.minLevel, entry.maxLevel);
+            continue;
+        }
+        _rewards.push_back(entry);
+    } while (result->NextRow());
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} item reward rows.", _rewards.size());
+}
+
+void DungeonChallengeMgr::LoadBossEntries()
+{
+    _bossEntries.clear();
+
+    if (QueryResult result = WorldDatabase.Query("SELECT creature_entry FROM dungeon_challenge_boss_entry"))
+    {
+        do
+        {
+            _bossEntries.insert(result->Fetch()[0].Get<uint32>());
+        } while (result->NextRow());
+    }
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Loaded {} extra boss entries.", _bossEntries.size());
+}
+
+void DungeonChallengeMgr::LoadTuningTables()
+{
+    LoadAffixData();
+    LoadScales();
+    LoadRewards();
+    LoadBossEntries();
+    LoadBossGroups();
 }
 
 void DungeonChallengeMgr::LoadBossGroups()
@@ -269,7 +400,7 @@ void DungeonChallengeMgr::LoadSnapshots()
     QueryResult result = CharacterDatabase.Query(
         "SELECT id, instance_id, map_id, difficulty, start_time, snap_time, timer_limit, "
         "creature_entry, creature_name, is_final_boss, rewarded, deaths, penalty_time, "
-        "player_name, player_guid FROM dungeon_challenge_snapshot "
+        "player_name, player_guid, combat_time FROM dungeon_challenge_snapshot "
         "ORDER BY map_id, difficulty, snap_time ASC");
 
     if (!result)
@@ -298,6 +429,7 @@ void DungeonChallengeMgr::LoadSnapshots()
         snap.penaltyTime    = fields[12].Get<uint32>();
         snap.playerName     = fields[13].Get<std::string>();
         snap.playerGuid     = fields[14].Get<uint32>();
+        snap.combatTime     = fields[15].Get<uint32>();
         _snapshots[snap.mapId].push_back(snap);
         ++count;
     } while (result->NextRow());
@@ -348,12 +480,102 @@ AffixInfo const* DungeonChallengeMgr::GetAffixInfo(DungeonChallengeAffix affix) 
     return nullptr;
 }
 
+uint32 DungeonChallengeMgr::GetCurrentWeek() const
+{
+    if (_weekPin)
+        return _weekPin;
+    int64 week = (int64(GameTime::GetGameTime().count()) - int64(ROTATION_EPOCH_OFFSET)) / int64(SECONDS_PER_WEEK);
+    return uint32(std::max<int64>(0, week));
+}
+
+// The weekly pool (enabled weekly affixes, by id) turns like a wheel: week w
+// takes `count` affixes starting at w x count. No randomness, so the Lua UI
+// computes the same set from the same table.
+std::vector<DungeonChallengeAffix> DungeonChallengeMgr::GetWeeklyAffixes(uint32 week) const
+{
+    std::vector<DungeonChallengeAffix> pool;
+    for (auto const& a : _affixes)
+        if (a.enabled && a.weekly)
+            pool.push_back(a.id);
+    std::sort(pool.begin(), pool.end());
+
+    std::vector<DungeonChallengeAffix> result;
+    if (pool.empty() || !_weeklyAffixCount)
+        return result;
+
+    uint32 count = std::min<uint32>(_weeklyAffixCount, pool.size());
+    uint32 start = uint32((uint64(week) * count) % pool.size());
+    for (uint32 i = 0; i < count; ++i)
+        result.push_back(pool[(start + i) % pool.size()]);
+    return result;
+}
+
 std::vector<DungeonChallengeAffix> DungeonChallengeMgr::GetAffixesForDifficulty(uint32 difficulty) const
 {
+    return GetAffixesForDifficulty(difficulty, GetCurrentWeek());
+}
+
+std::vector<DungeonChallengeAffix> DungeonChallengeMgr::GetAffixesForDifficulty(uint32 difficulty, uint32 week) const
+{
+    std::vector<DungeonChallengeAffix> weekly = GetWeeklyAffixes(week);
     std::vector<DungeonChallengeAffix> result;
     for (auto const& a : _affixes)
-        if (difficulty >= a.minDifficulty)
-            result.push_back(a.id);
+    {
+        if (!a.enabled || difficulty < a.minDifficulty)
+            continue;
+        if (a.weekly && std::find(weekly.begin(), weekly.end(), a.id) == weekly.end())
+            continue;
+        result.push_back(a.id);
+    }
+    return result;
+}
+
+float DungeonChallengeMgr::GetAffixValue(DungeonChallengeAffix affix, uint8 index, float fallback) const
+{
+    AffixInfo const* info = GetAffixInfo(affix);
+    if (!info)
+        return fallback;
+    float value = index == 1 ? info->value1 : info->value2;
+    return value > 0.0f ? value : fallback;
+}
+
+// ============================================================================
+// Per-dungeon factors and boss detection
+// ============================================================================
+
+DungeonScale const& DungeonChallengeMgr::GetScale(uint32 mapId) const
+{
+    static DungeonScale const defaultScale;
+    auto it = _scales.find(mapId);
+    return it != _scales.end() ? it->second : defaultScale;
+}
+
+bool DungeonChallengeMgr::IsChallengeBoss(Creature const* creature) const
+{
+    return creature->GetCreatureTemplate()->rank >= 3
+        || creature->isWorldBoss()
+        || creature->IsDungeonBoss()
+        || _bossEntries.count(creature->GetEntry());
+}
+
+float DungeonChallengeMgr::GetCreatureHealthMultiplier(Creature const* creature, uint32 difficulty) const
+{
+    DungeonScale const& scale = GetScale(creature->GetMapId());
+    return GetHealthMultiplier(difficulty) * (IsChallengeBoss(creature) ? scale.bossHealth : scale.trashHealth);
+}
+
+float DungeonChallengeMgr::GetCreatureDamageMultiplier(Creature const* creature, uint32 difficulty) const
+{
+    DungeonScale const& scale = GetScale(creature->GetMapId());
+    return GetDamageMultiplier(difficulty) * (IsChallengeBoss(creature) ? scale.bossDamage : scale.trashDamage);
+}
+
+std::vector<RewardEntry> DungeonChallengeMgr::GetRewardsForLevel(uint32 level) const
+{
+    std::vector<RewardEntry> result;
+    for (auto const& r : _rewards)
+        if (level >= r.minLevel && level <= r.maxLevel)
+            result.push_back(r);
     return result;
 }
 
@@ -406,6 +628,8 @@ ChallengeRun* DungeonChallengeMgr::CreateChallengeRun(uint32 instanceId, uint32 
     run.penaltyTime  = 0;
     run.leaderGuid   = leader->GetGUID();
     run.countdownTimer = 0;
+    run.affixWeek    = GetCurrentWeek();
+    run.affixes      = GetAffixesForDifficulty(difficulty, run.affixWeek);
 
     DungeonInfo const* info = GetDungeonInfo(mapId);
     run.totalBosses  = info ? info->totalCreatures : 3; // totalCreatures here stores boss count
@@ -465,6 +689,7 @@ void DungeonChallengeMgr::StartRun(ChallengeRun* run)
     run->state = CHALLENGE_STATE_RUNNING;
     run->startTime = GameTime::GetGameTime().count();
     run->elapsedTime = 0;
+    SaveActiveRun(run);
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Run started for instance {} (difficulty: {}, timer: {}s)",
         run->instanceId, run->difficulty, run->timerDuration);
@@ -485,6 +710,7 @@ void DungeonChallengeMgr::CompleteRun(ChallengeRun* run)
 
     run->state = CHALLENGE_STATE_COMPLETED;
     run->elapsedTime = GameTime::GetGameTime().count() - run->startTime;
+    DeleteActiveRun(run->instanceId);
 
     // Persist leaderboard/history/rewards while still in COMPLETED state (their guards require it).
     SaveRunToLeaderboard(run);
@@ -519,6 +745,7 @@ void DungeonChallengeMgr::FailRun(ChallengeRun* run)
         return;
 
     run->state = CHALLENGE_STATE_FAILED;
+    DeleteActiveRun(run->instanceId);
     LOG_INFO("module", ">> mod-dungeon-challenge: Run failed for instance {}.", run->instanceId);
 }
 
@@ -531,6 +758,7 @@ void DungeonChallengeMgr::EndRunByDeath(ChallengeRun* run)
     run->endedByDeath = true;
     run->summaryElapsedMs = 0;
     run->state = CHALLENGE_STATE_SUMMARY;
+    DeleteActiveRun(run->instanceId);
 
     // Record an incomplete run in each participant's history (completion_time = 0 => failed).
     for (auto const& guid : run->participants)
@@ -627,7 +855,13 @@ void DungeonChallengeMgr::AssignAffixesToCreatures(ChallengeRun* run, Map* map)
     if (!run || !map)
         return;
 
-    std::vector<DungeonChallengeAffix> availableAffixes = GetAffixesForDifficulty(run->difficulty);
+    std::vector<DungeonChallengeAffix> availableAffixes;
+    for (DungeonChallengeAffix affix : run->affixes)
+    {
+        AffixInfo const* info = GetAffixInfo(affix);
+        if (info && info->kind == AFFIX_KIND_MOB)
+            availableAffixes.push_back(affix);
+    }
     if (availableAffixes.empty())
         return;
 
@@ -640,8 +874,8 @@ void DungeonChallengeMgr::AssignAffixesToCreatures(ChallengeRun* run, Map* map)
             continue;
         if (creature->IsPet() || creature->IsSummon() || creature->IsTotem())
             continue;
-        // Skip bosses (world bosses, dungeon bosses, rank 3+)
-        if (creature->isWorldBoss() || creature->IsDungeonBoss() || creature->GetCreatureTemplate()->rank >= 3)
+        // Skip bosses (world bosses, dungeon bosses, rank 3+, dungeon_challenge_boss_entry)
+        if (IsChallengeBoss(creature))
             continue;
         // Skip critters (type 8), non-combat NPCs, and friendly mobs
         if (creature->GetCreatureTemplate()->type == CREATURE_TYPE_CRITTER)
@@ -701,8 +935,8 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
             break;
 
         case AFFIX_BIG_BOY:
-            // +50% HP; size handled by DBC aura
-            SetCreatureBaseHealth(creature, static_cast<uint32>(creature->GetCreateHealth() * 1.5f));
+            // +50% HP (value1 = factor); size handled by DBC aura
+            SetCreatureBaseHealth(creature, static_cast<uint32>(creature->GetCreateHealth() * GetAffixValue(AFFIX_BIG_BOY, 1, 1.5f)));
             creature->CastSpell(creature, SPELL_AFFIX_BIG_BOY, true);
             break;
 
@@ -715,8 +949,8 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
             break;
 
         case AFFIX_BIGGER_BOY:
-            // +50% HP; size and damage handled by DBC aura
-            SetCreatureBaseHealth(creature, static_cast<uint32>(creature->GetCreateHealth() * 1.5f));
+            // +50% HP (value1 = factor); size and damage handled by DBC aura
+            SetCreatureBaseHealth(creature, static_cast<uint32>(creature->GetCreateHealth() * GetAffixValue(AFFIX_BIGGER_BOY, 1, 1.5f)));
             creature->CastSpell(creature, SPELL_AFFIX_BIGGER_BOY, true);
             break;
 
@@ -749,6 +983,8 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
             // is inverted from how it reads -- true REJECTS living units. `false`
             // means "no aliveness filter", i.e. every creature in range, which is
             // what we want before applying our own IsAlive() check.
+            float const reduction = std::min(0.95f, GetAffixValue(AFFIX_DAMAGE_REDUCE, 1, 0.25f));
+            float const range = std::min(DAMAGE_REDUCE_SEARCH_RADIUS - 10.0f, GetAffixValue(AFFIX_DAMAGE_REDUCE, 2, 30.0f));
             std::list<Creature*> nearby;
             creature->GetDeadCreatureListInGrid(nearby, DAMAGE_REDUCE_SEARCH_RADIUS, false);
 
@@ -758,10 +994,10 @@ void DungeonChallengeMgr::ApplyAffixToCreature(Creature* creature, DungeonChalle
                     continue;
                 if (ally->IsPet() || ally->IsSummon())
                     continue;
-                if (ally->GetDistance(creature) > 30.0f)
+                if (ally->GetDistance(creature) > range)
                     continue;
                 auto* allyData = ally->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
-                allyData->incomingDamageReduction = std::max(allyData->incomingDamageReduction, 0.25f);
+                allyData->incomingDamageReduction = std::max(allyData->incomingDamageReduction, reduction);
             }
             break;
         }
@@ -803,11 +1039,34 @@ void DungeonChallengeMgr::ScaleCreatureForDifficulty(Creature* creature, uint32 
     if (!creature || difficulty == 0)
         return;
 
-    float hpMult = GetHealthMultiplier(difficulty);
-    float dmgMult = GetDamageMultiplier(difficulty);
+    // Level multipliers times the dungeon's boss or trash factor (dungeon_challenge_scale).
+    float hpMult = GetCreatureHealthMultiplier(creature, difficulty);
+    float dmgMult = GetCreatureDamageMultiplier(creature, difficulty);
 
     // Store original data and damage multiplier in DataMap
     auto* creatureData = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+
+    // Low-level dungeons (dungeon_challenge_scale.uplift_level) first lift
+    // every creature to the target level with WotLK base stats (idea 9); the
+    // level multipliers then apply on top, as in a level-80 dungeon. Once per
+    // life: OnCreatureSelectLevel clears originalLevel when the core rebuilds
+    // the stats.
+    // Capped at 81, so bosses (+2) stay at 83: creature_classlevelstats has no
+    // real rows above level 83 (base health 1).
+    if (uint8 uplift = std::min<uint8>(GetScale(creature->GetMapId()).upliftLevel, 81))
+    {
+        if (!creatureData->originalLevel && !IsPlayerSideCreature(creature))
+        {
+            uint8 rank = uint8(creature->GetCreatureTemplate()->rank);
+            uint8 target = uplift + (IsChallengeBoss(creature) ? 2 : (rank == CREATURE_ELITE_ELITE || rank == CREATURE_ELITE_RAREELITE ? 1 : 0));
+            if (creature->GetLevel() < target)
+            {
+                UpliftCreature(creature, target);
+                creatureData->baseCreateHealth = creature->GetCreateHealth();
+            }
+        }
+    }
+
     if (creatureData->originalHealth == 0)
         creatureData->originalHealth = creature->GetMaxHealth();
     // Unscaled create health of this life. Taken once: this function runs again
@@ -819,6 +1078,7 @@ void DungeonChallengeMgr::ScaleCreatureForDifficulty(Creature* creature, uint32 
     // Assigned, not multiplied: a repeated call used to compound the factor
     // (9x, 81x, ...) on every evade of an affixed mob.
     creatureData->extraDamageMultiplier = dmgMult;
+    creatureData->healthMultiplier = hpMult;
     creatureData->processed = true;
     creatureData->scaled = true;
 
@@ -863,7 +1123,7 @@ bool DungeonChallengeMgr::IsPlayerSideCreature(Creature* creature)
 // Snapshots
 // ============================================================================
 
-void DungeonChallengeMgr::SaveBossKillSnapshot(ChallengeRun const* run, Creature* boss, bool isFinalBoss, bool rewarded)
+void DungeonChallengeMgr::SaveBossKillSnapshot(ChallengeRun const* run, Creature* boss, bool isFinalBoss, bool rewarded, uint32 combatTime)
 {
     if (!run || !boss)
         return;
@@ -883,13 +1143,13 @@ void DungeonChallengeMgr::SaveBossKillSnapshot(ChallengeRun const* run, Creature
             "INSERT INTO `dungeon_challenge_snapshot` "
             "(`instance_id`, `map_id`, `difficulty`, `start_time`, `snap_time`, `timer_limit`, "
             "`creature_entry`, `creature_name`, `is_final_boss`, `rewarded`, `deaths`, `penalty_time`, "
-            "`player_name`, `player_guid`) VALUES ({}, {}, {}, {}, {}, {}, {}, '{}', {}, {}, {}, {}, '{}', {})",
+            "`player_name`, `player_guid`, `combat_time`) VALUES ({}, {}, {}, {}, {}, {}, {}, '{}', {}, {}, {}, {}, '{}', {}, {})",
             run->instanceId, run->mapId, run->difficulty, run->startTime,
             run->elapsedTime, run->timerDuration,
             boss->GetEntry(), bossName,
             isFinalBoss ? 1 : 0, rewarded ? 1 : 0,
             run->deathCount, run->penaltyTime,
-            playerName, playerGuidVal);
+            playerName, playerGuidVal, combatTime);
     }
 
     LOG_INFO("module", ">> mod-dungeon-challenge: Queued boss kill snapshots for {} (entry: {}, final: {}, participants: {})",
@@ -1029,6 +1289,9 @@ void DungeonChallengeMgr::DistributeRewards(ChallengeRun const* run)
         paragonXP *= 2;
     }
 
+    // Items of the level's band (dungeon_challenge_reward); the count doubles in time.
+    std::vector<RewardEntry> const items = GetRewardsForLevel(run->difficulty);
+
     for (auto const& guid : run->participants)
     {
         Player* player = ObjectAccessor::FindPlayer(guid);
@@ -1037,6 +1300,41 @@ void DungeonChallengeMgr::DistributeRewards(ChallengeRun const* run)
 
         // Gold reward
         player->ModifyMoney(goldReward);
+
+        for (RewardEntry const& reward : items)
+        {
+            uint32 count = reward.itemCount * (inTime ? 2 : 1);
+            ItemTemplate const* proto = sObjectMgr->GetItemTemplate(reward.itemEntry);
+            if (!proto)
+                continue;
+
+            if (player->AddItem(reward.itemEntry, count))
+            {
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "|cff00ff00[Dungeon Challenge]|r Reward: |cffffffff{}x {}|r", count, proto->Name1);
+                continue;
+            }
+
+            // Bags full: the reward comes by mail, in stacks the item allows.
+            CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
+            MailDraft draft("Dungeon Challenge reward", "Your bags were full when you finished the challenge. Here is your reward.");
+            uint32 left = count;
+            uint32 const stack = std::max<uint32>(1, proto->GetMaxStackSize());
+            while (left > 0)
+            {
+                uint32 n = std::min(left, stack);
+                if (Item* item = Item::CreateItem(reward.itemEntry, n, player))
+                {
+                    item->SaveToDB(trans);
+                    draft.AddItem(item);
+                }
+                left -= n;
+            }
+            draft.SendMailTo(trans, MailReceiver(player), MailSender(MAIL_NORMAL, 0, MAIL_STATIONERY_GM), MAIL_CHECK_MASK_COPIED);
+            CharacterDatabase.CommitTransaction(trans);
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "|cff00ff00[Dungeon Challenge]|r Reward: |cffffffff{}x {}|r (sent by mail, your bags are full)", count, proto->Name1);
+        }
 
         // Paragon XP reward
         if (paragonXP > 0)
@@ -1091,4 +1389,367 @@ bool DungeonChallengeMgr::IsInstanceLocked(Map* map) const
 
     auto* mapData = map->CustomData.GetDefault<MapChallengeData>("mod-dungeon-challenge");
     return mapData->isLockedNonChallenge;
+}
+
+// ============================================================================
+// Run affixes (Mythic+ idea 6): they act on the whole instance, not on the
+// affixed mobs. Numbers come from dungeon_challenge_affix value1/value2.
+// ============================================================================
+
+void DungeonChallengeMgr::UpdateRunAffixes(ChallengeRun* run, Map* map, uint32 diff)
+{
+    if (!run || !map || run->state != CHALLENGE_STATE_RUNNING)
+        return;
+
+    auto participantsInMap = [&]()
+    {
+        std::vector<Player*> players;
+        for (auto const& ref : map->GetPlayers())
+            if (Player* p = ref.GetSource())
+                if (p->IsAlive() && !p->IsGameMaster() && run->participants.count(p->GetGUID()))
+                    players.push_back(p);
+        return players;
+    };
+
+    // Lightning Sphere: every value1 seconds, a value2 % chance that a sphere
+    // appears next to a random participant (npc_dc_lightning_sphere pulses).
+    // Summoned by the map, not a player, so the run scales it like trash.
+    if (run->HasAffix(AFFIX_LIGHTNING_SPHERE))
+    {
+        bool const forced = run->forcedAffix == AFFIX_LIGHTNING_SPHERE;
+        run->sphereTimerMs += diff;
+        uint32 interval = uint32(GetAffixValue(AFFIX_LIGHTNING_SPHERE, 1, 25.0f) * IN_MILLISECONDS);
+        if (forced || run->sphereTimerMs >= interval)
+        {
+            run->sphereTimerMs = 0;
+            if (forced)
+                run->forcedAffix = AFFIX_NONE;
+            std::vector<Player*> players = participantsInMap();
+            if (!players.empty() && (forced || roll_chance_f(GetAffixValue(AFFIX_LIGHTNING_SPHERE, 2, 65.0f))))
+            {
+                Player* target = Acore::Containers::SelectRandomContainerElement(players);
+                Position pos = target->GetRandomNearPosition(6.0f);
+                if (map->SummonCreature(NPC_LIGHTNING_SPHERE, pos, nullptr, 60 * IN_MILLISECONDS))
+                    for (Player* p : players)
+                        ChatHandler(p->GetSession()).SendSysMessage(
+                            "|cffff8000[Affix: Lightning Sphere]|r A Lightning Sphere appears - kill it before it overloads everyone!");
+            }
+        }
+    }
+
+    // Entangling Roots: every value1 seconds per participant, a value2 % chance
+    // that a random hostile creature within 40 yd roots them.
+    if (run->HasAffix(AFFIX_ENTANGLING_ROOTS))
+    {
+        uint32 interval = uint32(GetAffixValue(AFFIX_ENTANGLING_ROOTS, 1, 10.0f) * IN_MILLISECONDS);
+        float chance = GetAffixValue(AFFIX_ENTANGLING_ROOTS, 2, 15.0f);
+        bool const forced = run->forcedAffix == AFFIX_ENTANGLING_ROOTS;
+        if (forced)
+            run->forcedAffix = AFFIX_NONE;
+        for (Player* player : participantsInMap())
+        {
+            uint32& timer = run->rootTimersMs[player->GetGUID()];
+            timer += diff;
+            if (!forced && timer < interval)
+                continue;
+            timer = 0;
+            if ((!forced && !roll_chance_f(chance)) || player->HasAura(SPELL_ENTANGLING_ROOTS))
+                continue;
+
+            std::list<Unit*> units;
+            Acore::AnyUnfriendlyUnitInObjectRangeCheck check(player, player, 40.0f);
+            Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(player, units, check);
+            Cell::VisitObjects(player, searcher, 40.0f);
+
+            std::vector<Creature*> casters;
+            for (Unit* unit : units)
+            {
+                Creature* c = unit->ToCreature();
+                if (!c || !c->IsAlive() || c->GetEntry() == NPC_LIGHTNING_SPHERE
+                    || c->GetCreatureTemplate()->type == CREATURE_TYPE_CRITTER || IsPlayerSideCreature(c)
+                    || !c->IsValidAttackTarget(player) || !c->IsWithinLOSInMap(player))
+                    continue;
+                casters.push_back(c);
+            }
+            if (!casters.empty())
+                Acore::Containers::SelectRandomContainerElement(casters)->CastSpell(player, SPELL_ENTANGLING_ROOTS, true);
+        }
+    }
+}
+
+void DungeonChallengeMgr::UpdateCreatureRunAffixes(ChallengeRun* run, Creature* creature, uint32 diff)
+{
+    // Enrage: every value1 seconds a value2 % chance that a creature fighting a
+    // player enrages (bosses included).
+    if (!run || !run->HasAffix(AFFIX_ENRAGE) || !creature->IsAlive() || !creature->IsInCombat())
+        return;
+    if (creature->GetEntry() == NPC_LIGHTNING_SPHERE || creature->GetCreatureTemplate()->type == CREATURE_TYPE_CRITTER)
+        return;
+    Unit* victim = creature->GetVictim();
+    if (!victim || !victim->GetCharmerOrOwnerPlayerOrPlayerItself() || IsPlayerSideCreature(creature))
+        return;
+
+    auto* data = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+    if (run->forcedAffix == AFFIX_ENRAGE && !creature->HasAura(SPELL_ENRAGE))
+    {
+        run->forcedAffix = AFFIX_NONE;
+        data->enrageTimerMs = 0;
+        creature->CastSpell(creature, SPELL_ENRAGE, true);
+        return;
+    }
+    data->enrageTimerMs += diff;
+    if (data->enrageTimerMs < uint32(GetAffixValue(AFFIX_ENRAGE, 1, 2.0f) * IN_MILLISECONDS))
+        return;
+    data->enrageTimerMs = 0;
+    if (!creature->HasAura(SPELL_ENRAGE) && roll_chance_f(GetAffixValue(AFFIX_ENRAGE, 2, 6.5f)))
+        creature->CastSpell(creature, SPELL_ENRAGE, true);
+}
+
+// ============================================================================
+// Run persistence (Mythic+ idea 10): a running run is one row of characters
+// `dungeon_challenge_active`, written at its start, after each boss kill and
+// death, and deleted when it ends. A participant entering the same instance
+// after a restart or an unload gets the run back; the clock kept running
+// (start time is absolute), so the downtime counts against the timer.
+// ============================================================================
+
+namespace
+{
+    template <class T>
+    std::string JoinIds(T const& ids)
+    {
+        std::ostringstream ss;
+        bool first = true;
+        for (auto const& id : ids)
+        {
+            if (!first)
+                ss << ',';
+            ss << uint32(id);
+            first = false;
+        }
+        return ss.str();
+    }
+
+    std::vector<uint32> SplitIds(std::string const& text)
+    {
+        std::vector<uint32> ids;
+        std::stringstream ss(text);
+        std::string token;
+        while (std::getline(ss, token, ','))
+            if (!token.empty())
+                ids.push_back(uint32(std::strtoul(token.c_str(), nullptr, 10)));
+        return ids;
+    }
+}
+
+void DungeonChallengeMgr::SaveActiveRun(ChallengeRun const* run)
+{
+    if (!run || run->state != CHALLENGE_STATE_RUNNING)
+        return;
+
+    std::vector<uint32> participants;
+    for (auto const& guid : run->participants)
+        participants.push_back(guid.GetCounter());
+
+    CharacterDatabase.Execute(
+        "REPLACE INTO `dungeon_challenge_active` "
+        "(`instance_id`, `map_id`, `difficulty`, `start_time`, `timer_duration`, `death_count`, `penalty_time`, "
+        "`bosses_killed`, `leader_guid`, `participants`, `affixes`, `affix_week`) "
+        "VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, '{}', '{}', {})",
+        run->instanceId, run->mapId, run->difficulty, run->startTime, run->timerDuration,
+        run->deathCount, run->penaltyTime, run->bossesKilled, run->leaderGuid.GetCounter(),
+        JoinIds(participants), JoinIds(run->affixes), run->affixWeek);
+}
+
+void DungeonChallengeMgr::DeleteActiveRun(uint32 instanceId)
+{
+    CharacterDatabase.Execute("DELETE FROM `dungeon_challenge_active` WHERE `instance_id` = {}", instanceId);
+}
+
+void DungeonChallengeMgr::CleanupActiveRuns()
+{
+    // Instance ids are reused once their save is gone: a row whose instance no
+    // longer exists must not restore into a stranger's new instance.
+    CharacterDatabase.DirectExecute(
+        "DELETE a FROM `dungeon_challenge_active` a LEFT JOIN `instance` i ON i.`id` = a.`instance_id` WHERE i.`id` IS NULL");
+    if (_restoreWindowMinutes)
+        CharacterDatabase.DirectExecute("DELETE FROM `dungeon_challenge_active` WHERE `start_time` < {}",
+            uint32(GameTime::GetGameTime().count()) - _restoreWindowMinutes * MINUTE);
+}
+
+ChallengeRun* DungeonChallengeMgr::TryRestoreRun(Player* player, Map* map)
+{
+    if (!player || !map || !map->IsDungeon() || !IsDungeonCapable(map->GetId()))
+        return nullptr;
+
+    uint32 const instanceId = map->GetInstanceId();
+    if (GetChallengeRun(instanceId))
+        return nullptr;
+
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT `map_id`, `difficulty`, `start_time`, `timer_duration`, `death_count`, `penalty_time`, "
+        "`bosses_killed`, `leader_guid`, `participants`, `affixes`, `affix_week` "
+        "FROM `dungeon_challenge_active` WHERE `instance_id` = {}", instanceId);
+    if (!result)
+        return nullptr;
+
+    Field* fields = result->Fetch();
+    uint32 const now = uint32(GameTime::GetGameTime().count());
+    uint32 const startTime = fields[2].Get<uint32>();
+    if (fields[0].Get<uint32>() != map->GetId()
+        || (_restoreWindowMinutes && now > startTime + _restoreWindowMinutes * MINUTE))
+    {
+        DeleteActiveRun(instanceId);
+        return nullptr;
+    }
+
+    std::unordered_set<ObjectGuid> participants;
+    for (uint32 low : SplitIds(fields[8].Get<std::string>()))
+        participants.insert(ObjectGuid::Create<HighGuid::Player>(low));
+    if (!participants.count(player->GetGUID()))
+        return nullptr; // only a participant brings the run back
+
+    ChallengeRun run;
+    run.instanceId     = instanceId;
+    run.mapId          = map->GetId();
+    run.difficulty     = fields[1].Get<uint32>();
+    run.state          = CHALLENGE_STATE_RUNNING;
+    run.startTime      = startTime;
+    run.timerDuration  = fields[3].Get<uint32>();
+    run.elapsedTime    = now > startTime ? now - startTime : 0;
+    run.deathCount     = fields[4].Get<uint32>();
+    run.penaltyTime    = fields[5].Get<uint32>();
+    run.bossesKilled   = fields[6].Get<uint32>();
+    run.leaderGuid     = ObjectGuid::Create<HighGuid::Player>(fields[7].Get<uint32>());
+    run.countdownTimer = 0;
+    run.participants   = participants;
+    run.affixWeek      = fields[10].Get<uint32>();
+    run.restored       = true;
+    for (uint32 id : SplitIds(fields[9].Get<std::string>()))
+        if (id > AFFIX_NONE && id < AFFIX_MAX)
+            run.affixes.push_back(DungeonChallengeAffix(id));
+
+    DungeonInfo const* info = GetDungeonInfo(run.mapId);
+    run.totalBosses = info ? info->totalCreatures : 3;
+
+    _activeRuns[instanceId] = run;
+    ChallengeRun* restored = &_activeRuns[instanceId];
+    map->CustomData.GetDefault<MapChallengeData>("mod-dungeon-challenge")->run = restored;
+
+    // Creature data died with the unloaded map: the mob affixes are drawn again
+    // on the living spawns; scaling follows through ProcessCreature.
+    AssignAffixesToCreatures(restored, map);
+
+    LOG_INFO("module", ">> mod-dungeon-challenge: Restored run for instance {} (map {}, level {}, {}s elapsed, {}/{} bosses).",
+        instanceId, run.mapId, run.difficulty, run.elapsedTime, run.bossesKilled, run.totalBosses);
+    return restored;
+}
+
+// ============================================================================
+// Level uplift (Mythic+ idea 9): a dungeon below level 80 runs at the uplift
+// level. Creatures get the base stats of the new level from
+// creature_classlevelstats (WotLK column) times their template modifiers;
+// their spell damage, which the core does not derive from level, grows with
+// the expected player health between the two levels, with diminishing
+// returns on the extra above DungeonChallenge.Uplift.DiminishingThreshold.
+// The idea follows araxiaonline's mod-mythic-plus; the code and the health
+// curve are our own.
+// ============================================================================
+
+void DungeonChallengeMgr::LoadExpectedPlayerHealth()
+{
+    _expectedPlayerHealth.clear();
+
+    // Naked health of the average stock class at each level (base health plus
+    // 10 per stamina point above 20), times a gear factor that grows from 1.5
+    // at level 0 to 3.0 at level 80.
+    QueryResult result = WorldDatabase.Query(
+        "SELECT `Level`, AVG(`BaseHP`), AVG(`Stamina`) FROM `player_class_stats` WHERE `Class` <= 11 GROUP BY `Level`");
+    if (!result)
+    {
+        LOG_WARN("module", ">> mod-dungeon-challenge: player_class_stats is empty; uplifted spell damage stays unscaled.");
+        return;
+    }
+
+    do
+    {
+        Field* fields = result->Fetch();
+        uint8 level = fields[0].Get<uint8>();
+        double baseHp = fields[1].Get<double>();
+        double stamina = fields[2].Get<double>();
+        double naked = baseHp + 20.0 + std::max(0.0, stamina - 20.0) * 10.0;
+        double gear = 1.5 + 1.5 * std::min(1.0, double(level) / 80.0);
+        _expectedPlayerHealth[level] = uint32(naked * gear);
+    } while (result->NextRow());
+}
+
+uint32 DungeonChallengeMgr::GetExpectedPlayerHealth(uint8 level) const
+{
+    auto it = _expectedPlayerHealth.find(level);
+    return it != _expectedPlayerHealth.end() ? it->second : 0;
+}
+
+void DungeonChallengeMgr::UpliftCreature(Creature* creature, uint8 level)
+{
+    CreatureTemplate const* cInfo = creature->GetCreatureTemplate();
+    CreatureBaseStats const* stats = sObjectMgr->GetCreatureBaseStats(level, cInfo->unit_class);
+    if (!stats)
+        return;
+
+    auto* data = creature->CustomData.GetDefault<CreatureChallengeData>("mod-dungeon-challenge");
+    data->originalLevel = creature->GetLevel();
+
+    // Creature::_GetHealthMod, which is not public.
+    float healthMod;
+    switch (creature->IsPet() ? 0 : cInfo->rank)
+    {
+        case CREATURE_ELITE_NORMAL:     healthMod = sWorld->getRate(RATE_CREATURE_NORMAL_HP); break;
+        case CREATURE_ELITE_RAREELITE:  healthMod = sWorld->getRate(RATE_CREATURE_ELITE_RAREELITE_HP); break;
+        case CREATURE_ELITE_WORLDBOSS:  healthMod = sWorld->getRate(RATE_CREATURE_ELITE_WORLDBOSS_HP); break;
+        case CREATURE_ELITE_RARE:       healthMod = sWorld->getRate(RATE_CREATURE_ELITE_RARE_HP); break;
+        default:                        healthMod = sWorld->getRate(RATE_CREATURE_ELITE_ELITE_HP); break;
+    }
+
+    creature->SetLevel(level);
+
+    uint32 health = std::max<uint32>(1, uint32(std::ceil(stats->BaseHealth[EXPANSION_WRATH_OF_THE_LICH_KING] * cInfo->ModHealth * healthMod)));
+    SetCreatureBaseHealth(creature, health);
+
+    uint32 mana = stats->GenerateMana(cInfo);
+    creature->SetCreateMana(mana);
+    creature->SetStatFlatModifier(UNIT_MOD_MANA, BASE_VALUE, float(mana));
+
+    float baseDamage = stats->BaseDamage[EXPANSION_WRATH_OF_THE_LICH_KING];
+    for (WeaponAttackType attack : { BASE_ATTACK, OFF_ATTACK, RANGED_ATTACK })
+    {
+        creature->SetBaseWeaponDamage(attack, MINDAMAGE, baseDamage);
+        creature->SetBaseWeaponDamage(attack, MAXDAMAGE, baseDamage * 1.5f);
+    }
+    creature->SetStatFlatModifier(UNIT_MOD_ATTACK_POWER, BASE_VALUE, float(stats->AttackPower));
+    creature->SetStatFlatModifier(UNIT_MOD_ATTACK_POWER_RANGED, BASE_VALUE, float(stats->RangedAttackPower));
+    creature->SetStatFlatModifier(UNIT_MOD_ARMOR, BASE_VALUE, stats->GenerateArmor(cInfo));
+
+    creature->UpdateAllStats();
+    creature->SetFullHealth();
+    creature->SetPower(POWER_MANA, creature->GetMaxPower(POWER_MANA));
+}
+
+int32 DungeonChallengeMgr::ScaleUpliftedSpellDamage(Creature const* creature, int32 damage) const
+{
+    if (damage <= 0)
+        return damage;
+
+    auto const* data = creature->CustomData.Get<CreatureChallengeData>("mod-dungeon-challenge");
+    if (!data || !data->originalLevel || data->originalLevel >= creature->GetLevel())
+        return damage;
+
+    uint32 from = GetExpectedPlayerHealth(data->originalLevel);
+    uint32 to = GetExpectedPlayerHealth(creature->GetLevel());
+    if (!from || !to)
+        return damage;
+
+    double extra = double(damage) * double(to) / double(from) - double(damage);
+    if (extra > _upliftDrThreshold)
+        extra = _upliftDrThreshold + std::pow(extra - _upliftDrThreshold, double(_upliftDrExponent));
+    return int32(std::min<double>(double(damage) + extra, double(std::numeric_limits<int32>::max())));
 }

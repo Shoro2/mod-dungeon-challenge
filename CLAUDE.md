@@ -340,10 +340,48 @@ Every 10 levels adds +1 affix to the pool. Selected mobs receive ALL available a
 - Commit messages: Conventional Commits (feat/fix/docs)
 - Language: English for all code, comments, and user-facing strings
 
+## Mythic+ round 2 (2026-10-17): ideas 4-10 of the survey
+
+Operator 2026-10-16: "ja die hören sich alle gut an" (survey: share-public
+`forgotten-land/research/2026-10-10-dc-mythic-plus-survey.md` §3). Code in
+`DungeonChallenge.cpp` / `DungeonChallengeScripts.cpp`; SQL in
+`data/sql/db-world/01_dungeon_challenge_mythic_ideas.sql` and
+`data/sql/db-characters/01_dungeon_challenge_mythic_ideas.sql` (idempotent).
+
+| Idea | What | Where |
+|---|---|---|
+| 4 | Boss/trash health and damage factors per dungeon, on top of the level multipliers | world `dungeon_challenge_scale`; `GetCreatureHealthMultiplier` / `GetCreatureDamageMultiplier`; `CreatureChallengeData::healthMultiplier` (mob heals use it) |
+| 5 | Affixes as data + weekly rotation | world `dungeon_challenge_affix` (fallback: the built-in 10); `kind` 0 mob / 1 run; `weekly` affixes turn like a wheel (`GetWeeklyAffixes`: pool by id, week w takes `WeeklyAffixCount` from w x count; week = Wednesday 00:00 UTC); a run fixes `ChallengeRun::affixes` at its start |
+| 6 | Run affixes 11 Lightning Sphere (NPC 500100 `npc_dc_lightning_sphere`, map-summoned so it is scaled), 12 Entangling Roots (57095), 13 Enrage (55285); random explosions left out (too punishing per the survey) | `UpdateRunAffixes` (map update), `UpdateCreatureRunAffixes` (creature update) |
+| 7 | Item rewards per level band, doubled in time; mail when the bags are full | world `dungeon_challenge_reward` (seed: Emblem of Frost 49426, 1 per started 10 levels) |
+| 8 | Fight time per boss (first player hit to kill, reset on evade) | `UnitScript::OnDamage` / `OnUnitEnterEvadeMode`; characters `dungeon_challenge_snapshot.combat_time`; chat line, Lua records tab and run summary |
+| 9 | Low-level dungeons lifted: trash to `uplift_level`, elites +1, bosses +2, WotLK base stats; spell damage x expected player health ratio with diminishing returns | `UpliftCreature`, `ScaleUpliftedSpellDamage`, `LoadExpectedPlayerHealth`; world `dungeon_challenge_boss_entry` (bosses below rank 3). Turtle Crescent Grove (802) enabled; Stormwind Vault 35, Karazhan Crypt 800, Hateforge Quarry 808, Gilneas City 815 staged `enabled = 0` until their boss lists are checked in a full clear |
+| 10 | A running run survives a restart or an instance unload | characters `dungeon_challenge_active` (written at start, boss kill, death; deleted on every end); `TryRestoreRun` in `OnPlayerMapChanged` (participants only, `RestoreWindowMinutes`); the clock is absolute, so downtime counts. Lua rebuilds its tracker from the same row (`TryRestoreTracking`). `OnDestroyInstance` keeps the row on purpose |
+
+This replaces the "no checkpoint resume" line of the fresh-attempt contract
+above: an interrupted run now comes back when a participant re-enters its
+instance; a fresh Start still unbinds and starts anew.
+
+Commands (`.dchallenge`): `affixes [level]` (players), `status` (GM: run,
+affixes, factors, last boss fight, the selected creature's level/boss/factors),
+`reload`, `scale`, `week` (pin a rotation week, 0 = real), `force <11-13>`,
+`start <map> <level>`, `forget` (drop the run from memory, keep its row) - the
+last five are admin tools for tests and tuning. Lua mirrors: `WEEKLY_AFFIX_COUNT`
+and the rotation wheel in `dungeon_challenge_server.lua` (the UI lists only this
+week's affixes; a pinned week reaches C++ runs, not the UI).
+
+Bot scenarios: `tests/dc_mythic_affixes.tbs` (4, 5, 6a/6b), `dc_mythic_rewards.tbs`
+(7, 8, Enrage), `dc_mythic_uplift.tbs` (9), `dc_mythic_restore.tbs` (10, via
+`forget` + `relog`: the test bot module takes its bots out of instances at
+shutdown, so a real restart is not bot-testable), `dc_npc_paging.tbs`.
+
+The NPC's dungeon lists (start, leaderboard, records) page at 20 dungeons
+(`DUNGEONS_PER_PAGE`): the core ASSERTs past 32 gossip options.
+
 ## Known Limitations / TODOs
 
 1. **DBC Spells**: Affix spells 900050-900054 must be created manually in Stoneharry spell editor
-2. **Boss Detection**: Currently via `creature_template.rank >= 3` → some bosses have rank < 3
+2. **Boss Detection**: rank >= 3, world boss, the dungeon-boss flag, or a `dungeon_challenge_boss_entry` row (since 2026-10-17)
 3. **Timer UI**: Active run tracker frame implemented via AIO (TrackerFrame). Shows timer, boss progress, deaths, affixes, +2/+3 thresholds. Toggle with `/dc tracker`. The top-center mob counter HUD (DCCounterFrame) toggles with `/dc counters`
 4. **Prepared Statements**: Currently format-string-based queries → should use prepared statements
 5. **Creature Scaling**: `GetCreatureBySpawnIdStore()` must be verified against correct API
