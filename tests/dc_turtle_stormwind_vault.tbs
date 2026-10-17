@@ -1,0 +1,87 @@
+name    mod-dungeon-challenge: a full boss clear of Turtle Stormwind Vault (35) completes the run
+# Server-side test bot run (mod-fl-testbots), T1. Stormwind Vault is staged `enabled = 0` in dungeon_challenge_dungeons with
+# boss_count 6; this checks the boss list (dungeon_challenge_boss_entry plus rank 3) before it is enabled: the
+# director kills every listed boss with `.die` in a level-1 run (uplift 80); the run must end cleared, with every kill
+# credited. `.dchallenge start` only knows enabled dungeons: the test window sets `enabled = 1` and restarts, and a
+# dungeon whose scenario fails goes back to `enabled = 0`.
+timeout 300s
+
+bot a warrior
+group party
+
+place 727 13288.5 11776.2 -31.5
+require a alive
+as gm .cheat god on
+as gm .dchallenge start 35 1
+expect output has "starting"
+waitfor gm map 35 timeout 20s
+wait 2s
+
+log boss 1 - bride (930073)
+do gm goto 73 116.2 -39.1
+wait 2s
+pick bride creature:930073 near gm
+require bride exists
+do gm target bride
+as gm .die
+waitfor bride dead timeout 5s
+wait 1s
+
+log boss 2 - volkan (930074)
+do gm goto -12.6 52.2 -38.1
+wait 2s
+pick volkan creature:930074 near gm
+require volkan exists
+do gm target volkan
+as gm .die
+waitfor volkan dead timeout 5s
+wait 1s
+
+log boss 3 - tham (930075)
+do gm goto -131.3 71.3 -30.6
+wait 2s
+pick tham creature:930075 near gm
+require tham exists
+do gm target tham
+as gm .die
+waitfor tham dead timeout 5s
+wait 1s
+
+log boss 4 - aszosh (930076)
+do gm goto -1.4 191.1 -26.6
+wait 2s
+pick aszosh creature:930076 near gm
+require aszosh exists
+do gm target aszosh
+as gm .die
+waitfor aszosh dead timeout 5s
+wait 1s
+
+log boss 5 - damian (930077)
+do gm goto -12.7 150.2 -39.4
+wait 2s
+pick damian creature:930077 near gm
+require damian exists
+do gm target damian
+as gm .die
+waitfor damian dead timeout 5s
+wait 1s
+
+log boss 6 - arc (930080)
+do gm goto -100.1 150.5 -39.4
+wait 2s
+pick arc creature:930080 near gm
+require arc exists
+do gm target arc
+as gm .die
+waitfor arc dead timeout 5s
+wait 1s
+
+log the run ended cleared with every boss credited
+as gm .dchallenge status
+expect output has "bosses 6/6"
+expect output has "state 7"
+
+cleanup
+as gm .cheat god off
+place 727 13288.5 11776.2 -31.5

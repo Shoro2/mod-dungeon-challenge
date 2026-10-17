@@ -1,0 +1,97 @@
+name    mod-dungeon-challenge: a full boss clear of Turtle Karazhan Crypt (800) completes the run
+# Server-side test bot run (mod-fl-testbots), T1. Karazhan Crypt is staged `enabled = 0` in dungeon_challenge_dungeons with
+# boss_count 7; this checks the boss list (dungeon_challenge_boss_entry plus rank 3) before it is enabled: the
+# director kills every listed boss with `.die` in a level-1 run (uplift 80); the run must end cleared, with every kill
+# credited. `.dchallenge start` only knows enabled dungeons: the test window sets `enabled = 1` and restarts, and a
+# dungeon whose scenario fails goes back to `enabled = 0`.
+timeout 300s
+
+bot a warrior
+group party
+
+place 727 13288.5 11776.2 -31.5
+require a alive
+as gm .cheat god on
+as gm .dchallenge start 800 1
+expect output has "starting"
+waitfor gm map 800 timeout 20s
+wait 2s
+
+log boss 1 - enk (930005)
+do gm goto -11188.2 -1791.6 5.3
+wait 2s
+pick enk creature:930005 near gm
+require enk exists
+do gm target enk
+as gm .die
+waitfor enk dead timeout 5s
+wait 1s
+
+log boss 2 - corpse (930006)
+do gm goto -11223.5 -1406.6 -14.4
+wait 2s
+pick corpse creature:930006 near gm
+require corpse exists
+do gm target corpse
+as gm .die
+waitfor corpse dead timeout 5s
+wait 1s
+
+log boss 3 - andreon (930008)
+do gm goto -11064.3 -1541.6 28.9
+wait 2s
+pick andreon creature:930008 near gm
+require andreon exists
+do gm target andreon
+as gm .die
+waitfor andreon dead timeout 5s
+wait 1s
+
+log boss 4 - marrow (930009)
+do gm goto -11214.6 -1800.2 -27.4
+wait 2s
+pick marrow creature:930009 near gm
+require marrow exists
+do gm target marrow
+as gm .die
+waitfor marrow dead timeout 5s
+wait 1s
+
+log boss 5 - hiv (930017)
+do gm goto -11255 -1744.5 -14.7
+wait 2s
+pick hiv creature:930017 near gm
+require hiv exists
+do gm target hiv
+as gm .die
+waitfor hiv dead timeout 5s
+wait 1s
+
+log boss 6 - gort (930021)
+do gm goto -11217 -1696.8 5.9
+wait 2s
+pick gort creature:930021 near gm
+require gort exists
+do gm target gort
+as gm .die
+waitfor gort dead timeout 5s
+wait 1s
+
+log boss 7 - Alarus (930016), summoned by the crypt's rune event in play; spawned here by hand
+as gm .npc add temp 930016
+wait 2s
+pick alarus creature:930016 near gm
+require alarus exists
+do gm target alarus
+as gm .die
+waitfor alarus dead timeout 5s
+wait 1s
+
+log the run ended cleared with every boss credited
+as gm .dchallenge status
+expect output has "bosses 7/7"
+expect output has "state 7"
+
+cleanup
+as gm .cheat god off
+place 727 13288.5 11776.2 -31.5

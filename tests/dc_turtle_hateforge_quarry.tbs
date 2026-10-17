@@ -1,0 +1,67 @@
+name    mod-dungeon-challenge: a full boss clear of Turtle Hateforge Quarry (808) completes the run
+# Server-side test bot run (mod-fl-testbots), T1. Hateforge Quarry is staged `enabled = 0` in dungeon_challenge_dungeons with
+# boss_count 4; this checks the boss list (dungeon_challenge_boss_entry plus rank 3) before it is enabled: the
+# director kills every listed boss with `.die` in a level-1 run (uplift 80); the run must end cleared, with every kill
+# credited. `.dchallenge start` only knows enabled dungeons: the test window sets `enabled = 1` and restarts, and a
+# dungeon whose scenario fails goes back to `enabled = 0`.
+timeout 300s
+
+bot a warrior
+group party
+
+place 727 13288.5 11776.2 -31.5
+require a alive
+as gm .cheat god on
+as gm .dchallenge start 808 1
+expect output has "starting"
+waitfor gm map 808 timeout 20s
+wait 2s
+
+log boss 1 - hate (930095)
+do gm goto -7990.6 -3581.7 112.4
+wait 2s
+pick hate creature:930095 near gm
+require hate exists
+do gm target hate
+as gm .die
+waitfor hate dead timeout 5s
+wait 1s
+
+log boss 2 - bargul (930096)
+do gm goto -8304.9 -3442.2 195.4
+wait 2s
+pick bargul creature:930096 near gm
+require bargul exists
+do gm target bargul
+as gm .die
+waitfor bargul dead timeout 5s
+wait 1s
+
+log boss 3 - figgles (930097)
+do gm goto -8119.5 -3462.5 171.6
+wait 2s
+pick figgles creature:930097 near gm
+require figgles exists
+do gm target figgles
+as gm .die
+waitfor figgles dead timeout 5s
+wait 1s
+
+log boss 4 - hargesh (930098)
+do gm goto -8307.3 -3741.5 138.9
+wait 2s
+pick hargesh creature:930098 near gm
+require hargesh exists
+do gm target hargesh
+as gm .die
+waitfor hargesh dead timeout 5s
+wait 1s
+
+log the run ended cleared with every boss credited
+as gm .dchallenge status
+expect output has "bosses 4/4"
+expect output has "state 7"
+
+cleanup
+as gm .cheat god off
+place 727 13288.5 11776.2 -31.5

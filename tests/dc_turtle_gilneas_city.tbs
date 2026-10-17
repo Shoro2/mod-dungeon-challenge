@@ -1,0 +1,117 @@
+name    mod-dungeon-challenge: a full boss clear of Turtle Gilneas City (815) completes the run
+# Server-side test bot run (mod-fl-testbots), T1. Gilneas City is staged `enabled = 0` in dungeon_challenge_dungeons with
+# boss_count 8; this checks the boss list (dungeon_challenge_boss_entry plus rank 3) before it is enabled: the
+# director kills every listed boss with `.die` in a level-1 run (uplift 80); the run must end cleared, with every kill
+# credited. `.dchallenge start` only knows enabled dungeons: the test window sets `enabled = 1` and restarts, and a
+# dungeon whose scenario fails goes back to `enabled = 0`.
+timeout 300s
+
+bot a warrior
+group party
+
+place 727 13288.5 11776.2 -31.5
+require a alive
+as gm .cheat god on
+as gm .dchallenge start 815 1
+expect output has "starting"
+waitfor gm map 815 timeout 20s
+wait 2s
+
+log boss 1 - holtz (930125)
+do gm goto -1100.3 2332.6 183.7
+wait 2s
+pick holtz creature:930125 near gm
+require holtz exists
+do gm target holtz
+as gm .die
+waitfor holtz dead timeout 5s
+wait 1s
+
+log boss 2 - rage (930126)
+do gm goto -1288.2 2221.5 184.2
+wait 2s
+pick rage creature:930126 near gm
+require rage exists
+do gm target rage
+as gm .die
+waitfor rage dead timeout 5s
+wait 1s
+
+log boss 3 - judge (930127)
+do gm goto -1475.2 2321.6 186.3
+wait 2s
+pick judge creature:930127 near gm
+require judge exists
+do gm target judge
+as gm .die
+waitfor judge dead timeout 5s
+wait 1s
+
+log boss 4 - dusti (930128)
+do gm goto -1450.7 2567.1 183.7
+wait 2s
+pick dusti creature:930128 near gm
+require dusti exists
+do gm target dusti
+as gm .die
+waitfor dusti dead timeout 5s
+wait 1s
+
+log boss 5 - magnus (930129)
+do gm goto -1061.8 2805.4 183.2
+wait 2s
+pick magnus creature:930129 near gm
+require magnus exists
+do gm target magnus
+as gm .die
+waitfor magnus dead timeout 5s
+wait 1s
+
+log boss 6 - levvin (930134)
+do gm goto -947.5 2927.1 134.9
+wait 2s
+pick levvin creature:930134 near gm
+require levvin exists
+do gm target levvin
+as gm .die
+waitfor levvin dead timeout 5s
+wait 1s
+
+log boss 7 - celia (930114)
+do gm goto -962.3 2949.4 167.3
+wait 2s
+pick celia creature:930114 near gm
+require celia exists
+do gm target celia
+as gm .die
+waitfor celia dead timeout 5s
+wait 1s
+
+log boss 8 - mortimer (930115)
+do gm goto -956.4 2957.2 167.3
+wait 2s
+pick mortimer creature:930115 near gm
+require mortimer exists
+do gm target mortimer
+as gm .die
+waitfor mortimer dead timeout 5s
+wait 1s
+
+log boss 9 - genn (930124)
+do gm goto -942.8 2968.6 213.2
+wait 2s
+pick genn creature:930124 near gm
+require genn exists
+do gm target genn
+as gm .die
+waitfor genn dead timeout 5s
+wait 1s
+
+log the run ended cleared with every boss credited
+as gm .dchallenge status
+expect output has "bosses 8/8"
+expect output has "state 7"
+
+cleanup
+as gm .cheat god off
+place 727 13288.5 11776.2 -31.5
