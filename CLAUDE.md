@@ -1,5 +1,11 @@
 # CLAUDE.md — mod-dungeon-challenge
 
+> **Internal docs live in the vault, not here** (rule since 2026-10-18: this public repo keeps only
+> README.md with the general info and installation, this CLAUDE.md, the license and the code).
+> Index, data structure, functions, log and todo: share-public `docs/World of Warcraft/module-repos/mod-dungeon-challenge/`
+> (local checkout `C:\Users\Anwender\Documents\GitHub\share-public`). Update them there,
+> in a vault worktree, in the same session as the code change.
+
 Technical documentation for AI assistants working on this module.
 
 ## Private lifecycle candidate (2026-10-05, unbuilt)

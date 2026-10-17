@@ -1,6 +1,22 @@
 # mod-dungeon-challenge
 
 A **Mythic+ inspired dungeon challenge system** for AzerothCore (WoW 3.3.5a WotLK).
+A group enters a dungeon through a challenge NPC, picks a difficulty level (1-100), lights the
+keystone and has to clear all bosses before the timer runs out. Higher levels scale mob health and
+damage and add affixes; completed runs pay gold, Paragon XP and items and are recorded in a leaderboard.
+
+## Requirements
+
+- AzerothCore (WotLK 3.3.5a) -- the [Shoro2/azerothcore-wotlk](https://github.com/Shoro2/azerothcore-wotlk) fork.
+  The module itself only uses hooks that upstream has, but it requires mod-paragon, and mod-paragon needs
+  prepared statements that live in the fork's core database layer.
+- **mod-paragon** (`ParagonUtils.h`, Paragon XP rewards) must be in `modules/`; the module does not compile without it.
+- **AIO** (Rochet2) on a Lua engine such as `mod-ale`. The window, tracker, counter HUD and run summary
+  are AIO addons; the two scripts in `lua_scripts/` must be deployed (see Installation).
+- **Affix spells 900050-900060** must exist in Spell.dbc on server and client (they are DBC aura spells
+  and are not created by the SQL files): Speedy, Immolation Aura, CC Immunity, Hell Touched (aura and
+  debuff), Damage Reduction, Big Boy, Bigger Boy, Heavy Hits, Lil' Bro, Call for Help. Without them the
+  corresponding affixes lose their effect or visual.
 
 ## Features
 
@@ -19,6 +35,12 @@ A **Mythic+ inspired dungeon challenge system** for AzerothCore (WoW 3.3.5a WotL
   tracker, a mob counter HUD and a run-end summary; the NPC 500000 offers the same through gossip menus
 
 ## Supported Dungeons
+
+The 16 WotLK dungeons below are enabled by default. The SQL also registers the Forgotten Land custom dungeons
+(maps 738-748) and five Turtle-WoW ported dungeons (maps 35, 800, 802, 808, 815); they only work on a
+server that has those maps, so disable the rows otherwise
+(`UPDATE dungeon_challenge_dungeons SET enabled = 0 WHERE map_id >= 738 OR map_id IN (35, 800, 802, 808, 815);`).
+Low-level dungeons are lifted to level 80 through `dungeon_challenge_scale.uplift_level`.
 
 | Dungeon | Timer |
 |---------|-------|
@@ -41,70 +63,33 @@ A **Mythic+ inspired dungeon challenge system** for AzerothCore (WoW 3.3.5a WotL
 
 ## Installation
 
-### 1. Add Module to AzerothCore
+1. Clone the module and its dependencies into the core's `modules/` folder, then re-run CMake and build:
 
 ```bash
 cd azerothcore-wotlk/modules/
 git clone https://github.com/Shoro2/mod-dungeon-challenge.git
+cd ../build
+cmake .. -DSCRIPTS=static -DMODULES=static
+make -j$(nproc) && make install
 ```
 
-Or as symlink:
-```bash
-ln -s /path/to/mod-dungeon-challenge azerothcore-wotlk/modules/mod-dungeon-challenge
-```
-
-### 2. Recompile the Server
-
-```bash
-cd azerothcore-wotlk/build
-cmake .. -DCMAKE_INSTALL_PREFIX=$HOME/azeroth-server \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-    -DSCRIPTS=static -DMODULES=static
-make -j$(nproc)
-make install
-```
-
-### 3. Create Database Tables
-
-SQL files are automatically executed on first startup if `include.sh` is correctly configured.
-
-**Manual setup:**
-
-```bash
-# World database
-mysql -u root acore_world < modules/mod-dungeon-challenge/data/sql/db-world/00_dungeon_challenge_world.sql
-
-# Characters database
-mysql -u root acore_characters < modules/mod-dungeon-challenge/data/sql/db-characters/00_dungeon_challenge_characters.sql
-```
-
-### 4. Adjust Configuration
-
-Copy the configuration file:
-```bash
-cp modules/mod-dungeon-challenge/conf/mod_dungeon_challenge.conf.dist etc/mod_dungeon_challenge.conf
-```
-
-Adjust the values in `mod_dungeon_challenge.conf` as needed (see Configuration below).
-
-### 5. Start the Server
-
-```bash
-./worldserver
-```
-
-On startup you should see:
-```
->> mod-dungeon-challenge: Configuration loaded (Enabled: Yes, MaxDifficulty: 20, AffixPct: 5%)
->> mod-dungeon-challenge: Loaded 16 default dungeons.
->> mod-dungeon-challenge: Loaded 10 affixes.
-```
+2. **SQL** is applied automatically by the AzerothCore db updater on the next worldserver start
+   (`data/sql/db-world/` and `data/sql/db-characters/`; this creates the NPC 500000, the Dungeon Challenge
+   Stone 500002, the Lightning Sphere 500100, the chat commands and all `dungeon_challenge_*` tables).
+3. **Configuration:** copy `conf/mod_dungeon_challenge.conf.dist` to your `configs/modules/` folder as
+   `mod_dungeon_challenge.conf` and adjust it (see Configuration).
+4. **Lua/AIO:** copy both files from `lua_scripts/` into the server's `lua_scripts/Dungeon_Challenge/` folder
+   (the server script registers the addon by that path). The Lua configuration block at the top of
+   `dungeon_challenge_server.lua` must match the `.conf` values.
+5. Start the worldserver. The log should show lines such as
+   `mod-dungeon-challenge: Configuration loaded ...` and `Loaded N dungeons from database.`
 
 ## In-Game Guide
 
 ### Spawn the NPC
 
-The Challenge NPC has entry ID **500000**. Spawn it in a capital city:
+The Challenge NPC has entry ID **500000**. Spawn it in a capital city (the Dungeon Challenge Stone,
+gameobject 500002, opens the same window inside a dungeon):
 
 ```
 .npc add 500000
@@ -116,11 +101,7 @@ The Challenge NPC has entry ID **500000**. Spawn it in a capital city:
 2. **Talk to the NPC** → Main menu opens
 3. **Select "Start Dungeon Challenge"**
 4. **Choose a dungeon** from the list
-5. **Choose a difficulty level** (1-20)
-   - Green (1-5): Entry level
-   - Yellow (6-10): Medium
-   - Orange (11-15): Hard
-   - Red (16-20): Extreme
+5. **Choose a difficulty level** (1 up to `DungeonChallenge.MaxDifficulty`; mob affixes unlock every 10 levels)
 6. **Confirm** → Group is teleported into the dungeon
 7. **Use the Keystone** → 10-second countdown → Timer starts → Defeat all bosses before time runs out!
 
@@ -131,7 +112,7 @@ The Challenge NPC has entry ID **500000**. Spawn it in a capital city:
 - **Deaths**: Each death adds a time penalty and is announced. A **wipe**
   (all participants dead at once; solo = any death) **ends the run**
   (configurable to "any death" via `DeathEndsRunMode`).
-- **Affixes**: ~15% of mobs have special abilities (marked in chat)
+- **Affixes**: `DungeonChallenge.AffixPercentage` (15%) of the mobs carry the mob affixes of the level; run affixes act on the whole instance
 - **Mob Counters**: A top-center HUD shows **"Mobs pulled"** (hostile mobs
   currently in combat near the party — respawn copies, Lil' Bro splits and
   boss adds included) and **"Total mob spawns left: y/x"** (alive / all
@@ -180,7 +161,7 @@ Via the NPC:
 | `DungeonChallenge.SummarySeconds` | 30 | Run-summary auto-leave countdown in seconds |
 | `DungeonChallenge.DeathEndsRunMode` | 0 | 0 = wipe ends run, 1 = any death ends run |
 | `DungeonChallenge.FallbackSeconds` | 40 | Server safety teleport-home/reset (no add-on) |
-| `DungeonChallenge.RunCredit` | 402451 | Kill credit per completed run (call board quests), 0 = off |
+| `DungeonChallenge.RunCredit` | 402451 | Kill-credit creature entry granted per completed run (for quests that count runs), 0 = off |
 | `DungeonChallenge.WeeklyAffixCount` | 2 | Weekly affixes drawn per week from the rotating pool |
 | `DungeonChallenge.RestoreWindowMinutes` | 120 | A saved run older than this is not restored (0 = no limit) |
 | `DungeonChallenge.Uplift.DiminishingThreshold` | 10000 | Uplifted spell damage: extra above this grows slower |
@@ -195,10 +176,12 @@ Via the NPC:
 | `dungeon_challenge_reward` | items per level band for a completed run (count doubled in time) |
 | `dungeon_challenge_boss_entry` | creatures that count as a boss below rank 3 |
 
-`.dchallenge reload` reloads them; `.dchallenge affixes [level]` shows this week's rotation.
-GM tools: `.dchallenge status` (the run and the selected creature's scaling), `.dchallenge scale` (live factors),
-`.dchallenge week` (pin a rotation week), `.dchallenge force` (fire a run affix now), `.dchallenge start`,
-`.dchallenge forget` (drop the run from memory as a restart does).
+## Commands
+
+- `.dchallenge affixes [level]` (everyone): this week's affix rotation.
+- `.dchallenge status` (GM): the run of your instance and the selected creature's scaling.
+- `.dchallenge reload`, `scale`, `week`, `force`, `start`, `forget` (administrator): reload the tuning tables, set live factors, pin a rotation week, fire a run affix now, start a run, drop the run from memory as a restart does.
+- In game, `/dc` toggles the window, `/dc tracker` the run tracker and `/dc counters` the mob counters.
 
 ## Difficulty Scaling
 
@@ -254,7 +237,3 @@ VALUES (999, 'My Custom Dungeon', 100.0, 200.0, 50.0, 0.0, 30, 4);
 - Check the entrance coordinates in `dungeon_challenge_dungeons`
 - Coordinates with `0,0,0` must be manually added
 - Tip: Go to the dungeon entrance and use `.gps` for the coordinates
-
-## License
-
-This module is licensed under GNU GPL v2, compatible with AzerothCore.
