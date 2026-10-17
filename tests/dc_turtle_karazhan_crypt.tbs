@@ -77,15 +77,15 @@ as gm .die
 waitfor gort dead timeout 5s
 wait 1s
 
-log boss 7 - Alarus (930016), summoned by the crypt's rune event in play; spawned here by hand
+log boss 7 - Alarus (930016), summoned by the crypt's rune event in play; spawned here by hand (a temporary
+# summon vanishes at death, so the run's credit is the check, not his corpse)
 as gm .npc add temp 930016
 wait 2s
 pick alarus creature:930016 near gm
 require alarus exists
 do gm target alarus
 as gm .die
-waitfor alarus dead timeout 5s
-wait 1s
+wait 2s
 
 log the run ended cleared with every boss credited
 as gm .dchallenge status

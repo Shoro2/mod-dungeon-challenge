@@ -7,10 +7,6 @@
 
 ## Mythic+ round 2 (2026-10-17) - owed
 
-- **(medium)** Turtle dungeons 35 Stormwind Vault, 800 Karazhan Crypt, 808 Hateforge Quarry, 815 Gilneas City are staged
-  `enabled = 0` in `dungeon_challenge_dungeons`: check each boss list (`dungeon_challenge_boss_entry`, boss_count) with one
-  full clear before enabling - a wrong count blocks the run's completion. Karazhan Crypt's rank-3 trigger Crypt Watcher
-  (930019) would count as a boss if it can die.
 - **(medium)** A real restart with a run in progress is not bot-tested (the test bot module takes its bots out of their
   instances at shutdown); `dc_mythic_restore.tbs` covers the restore path through `.dchallenge forget` + relog. Owed: one
   restart with a real client inside a run.
