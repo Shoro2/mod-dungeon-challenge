@@ -5,8 +5,8 @@
 
 local AIO = AIO or require("AIO")
 
--- This file is added by the server script via AIO.AddAddon()
--- On server side, stop execution here
+-- This file registers itself with AIO here (the server script does not);
+-- on the server side, stop execution here
 if AIO.AddAddon() then
     return
 end

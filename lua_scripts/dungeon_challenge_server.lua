@@ -8,9 +8,10 @@
 
 local AIO = AIO or require("AIO")
 
--- Register the client-side UI addon to be sent to players
--- Path is relative to worldserver.exe and must match the deployed location
-AIO.AddAddon("lua_scripts/Dungeon_Challenge/dungeon_challenge_ui.lua", "DChallengeUI")
+-- The client UI file registers itself ("if AIO.AddAddon() then return end" runs
+-- when Eluna loads it). Registering it here as well, under a second name, made
+-- AIO send it twice: every client ran two copies of the UI (two trackers, two
+-- counters) and printed "UI loaded" twice (found 2026-10-28).
 
 -- ============================================================================
 -- Configuration (must match worldserver.conf values)
