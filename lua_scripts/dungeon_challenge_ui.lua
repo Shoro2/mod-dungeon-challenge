@@ -159,7 +159,7 @@ end
 
 local ContentFrame = FLUI.Panel(MainFrame)
 ContentFrame:SetPoint("TOPLEFT", 8, -(TAB_TOP + 34))
-ContentFrame:SetPoint("BOTTOMRIGHT", -8, 8)
+ContentFrame:SetPoint("BOTTOMRIGHT", -8, 28) -- the strip below keeps the size grip
 
 -- Manual ScrollFrame (no UIPanelScrollFrameTemplate — avoids AIO/template issues)
 local ScrollFrame = CreateFrame("ScrollFrame", nil, ContentFrame)
