@@ -15,6 +15,11 @@ end
 -- CLIENT-SIDE CODE BELOW
 -- ============================================================================
 
+-- FLUI (fl-lua-scripts AIO_UI/, the Forgotten Land window kit) draws the
+-- windows and the run HUD in the player's theme.
+local FLUI = assert(FLUI, "Dungeon Challenge needs AIO_UI/FLUI_Client.lua loaded first")
+local TAB_TOP = FLUI.HEADER + 2
+
 -- Saved variables for UI position
 AIO.AddSavedVarChar("DChallenge_UIPos")
 DChallenge_UIPos = DChallenge_UIPos or {}
@@ -96,53 +101,11 @@ end
 -- Main Frame
 -- ============================================================================
 
-local MainFrame = CreateFrame("Frame", "DungeonChallengeFrame", UIParent)
-MainFrame:SetSize(676, 585)
-MainFrame:SetPoint("CENTER", 0, 50)
-MainFrame:SetMovable(true)
-MainFrame:EnableMouse(true)
-MainFrame:RegisterForDrag("LeftButton")
-MainFrame:SetScript("OnDragStart", MainFrame.StartMoving)
-MainFrame:SetScript("OnDragStop", MainFrame.StopMovingOrSizing)
-MainFrame:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 16,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 }
+-- Movable, Escape closes, position saved per character; title and close button from FLUI
+local MainFrame = FLUI.Window("DungeonChallengeFrame", {
+    width = 676, height = 589, point = { "CENTER", 0, 50 },
+    title = "Dungeon Challenge", icon = "Interface/Icons/Achievement_Dungeon_ClassicDungeonMaster",
 })
-MainFrame:SetBackdropColor(0.05, 0.05, 0.1, 0.95)
-MainFrame:SetBackdropBorderColor(0.4, 0.4, 0.8, 0.8)
-MainFrame:SetFrameStrata("DIALOG")
-MainFrame:Hide()
-
-AIO.SavePosition(MainFrame, true)
-
--- Close with Escape
-table.insert(UISpecialFrames, "DungeonChallengeFrame")
-
--- ============================================================================
--- Title Bar
--- ============================================================================
-
-local TitleBg = MainFrame:CreateTexture(nil, "ARTWORK")
-TitleBg:SetPoint("TOPLEFT", 6, -6)
-TitleBg:SetPoint("TOPRIGHT", -6, -6)
-TitleBg:SetHeight(28)
-TitleBg:SetTexture(0.1, 0.1, 0.25, 0.9)
-
-local TitleIcon = MainFrame:CreateTexture(nil, "OVERLAY")
-TitleIcon:SetSize(24, 24)
-TitleIcon:SetPoint("TOPLEFT", 10, -8)
-TitleIcon:SetTexture("Interface/Icons/Achievement_Dungeon_ClassicDungeonMaster")
-
-local TitleText = MainFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-TitleText:SetPoint("LEFT", TitleIcon, "RIGHT", 6, 0)
-TitleText:SetText("|cffFFD700Dungeon Challenge|r")
-
--- Close Button
-local CloseBtn = CreateFrame("Button", nil, MainFrame, "UIPanelCloseButton")
-CloseBtn:SetPoint("TOPRIGHT", -2, -2)
-CloseBtn:SetScript("OnClick", function() MainFrame:Hide() end)
 
 -- ============================================================================
 -- Tab Buttons
@@ -157,31 +120,20 @@ local TAB_NAMES = {
 
 local tabButtons = {}
 
+-- Marks tab index as the open one.
+local function MarkTab(index)
+    for i, tb in ipairs(tabButtons) do
+        tb:SetSelected(i == index)
+    end
+end
+
 local function CreateTabButton(parent, index, tabInfo)
-    local btn = CreateFrame("Button", "DCTab_" .. tabInfo.key, parent)
-    btn:SetSize(156, 28)
-    btn:SetPoint("TOPLEFT", 8 + (index - 1) * 163, -38)
-
-    local bg = btn:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetTexture(0.15, 0.15, 0.3, 0.8)
-    btn.bg = bg
-
-    local highlight = btn:CreateTexture(nil, "HIGHLIGHT")
-    highlight:SetAllPoints()
-    highlight:SetTexture(0.3, 0.3, 0.6, 0.4)
-
-    local text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    text:SetPoint("CENTER", 0, 0)
-    text:SetText(tabInfo.label)
-    btn.text = text
+    local btn = FLUI.Button(parent, tabInfo.label, 156, 28, "DCTab_" .. tabInfo.key)
+    btn:SetPoint("TOPLEFT", 8 + (index - 1) * 163, -TAB_TOP)
 
     btn:SetScript("OnClick", function()
         currentTab = tabInfo.key
-        for _, tb in ipairs(tabButtons) do
-            tb.bg:SetTexture(0.15, 0.15, 0.3, 0.8)
-        end
-        bg:SetTexture(0.25, 0.25, 0.5, 1.0)
+        MarkTab(index)
 
         if tabInfo.key == "dungeons" then
             ShowDungeonPanel()
@@ -205,17 +157,9 @@ end
 -- Content Area (scrollable, no XML template — works reliably with AIO)
 -- ============================================================================
 
-local ContentFrame = CreateFrame("Frame", nil, MainFrame)
-ContentFrame:SetPoint("TOPLEFT", 8, -72)
+local ContentFrame = FLUI.Panel(MainFrame)
+ContentFrame:SetPoint("TOPLEFT", 8, -(TAB_TOP + 34))
 ContentFrame:SetPoint("BOTTOMRIGHT", -8, 8)
-ContentFrame:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 12,
-    insets = { left = 3, right = 3, top = 3, bottom = 3 }
-})
-ContentFrame:SetBackdropColor(0.02, 0.02, 0.05, 0.9)
-ContentFrame:SetBackdropBorderColor(0.3, 0.3, 0.5, 0.6)
 
 -- Manual ScrollFrame (no UIPanelScrollFrameTemplate — avoids AIO/template issues)
 local ScrollFrame = CreateFrame("ScrollFrame", nil, ContentFrame)
@@ -274,10 +218,8 @@ local function AddLabel(yOffset, text, fontTemplate, r, g, b)
 end
 
 local function AddButton(yOffset, width, height, text, onClick)
-    local btn = CreateFrame("Button", nil, ScrollChild, "UIPanelButtonTemplate")
-    btn:SetSize(width, height)
+    local btn = FLUI.Button(ScrollChild, text, width, height)
     btn:SetPoint("TOPLEFT", 8, yOffset)
-    btn:SetText(text)
     btn:SetScript("OnClick", onClick)
     btn:Show()
     table.insert(contentElements, btn)
@@ -285,11 +227,10 @@ local function AddButton(yOffset, width, height, text, onClick)
 end
 
 local function AddDivider(yOffset)
-    local div = ScrollChild:CreateTexture(nil, "ARTWORK")
+    local div = FLUI.Line(ScrollChild)
     div:SetPoint("TOPLEFT", 4, yOffset)
     div:SetWidth(SCROLL_CONTENT_WIDTH - 8)
     div:SetHeight(1)
-    div:SetTexture(0.4, 0.4, 0.6, 0.5)
     div:Show()
     table.insert(contentElements, div)
     return div
@@ -310,9 +251,7 @@ local function AddClickableText(yOffset, text, onClick)
     label:SetJustifyH("LEFT")
     btn.label = label
 
-    local highlight = btn:CreateTexture(nil, "HIGHLIGHT")
-    highlight:SetAllPoints()
-    highlight:SetTexture(0.3, 0.3, 0.6, 0.3)
+    FLUI.Hover(btn)
 
     btn:SetScript("OnClick", onClick)
     btn:SetScript("OnEnter", function(self)
@@ -386,25 +325,9 @@ function ShowDungeonPanel()
         tile:SetSize(tileW, tileH)
         tile:SetPoint("TOPLEFT", x, y)
 
-        -- Background
-        local bg = tile:CreateTexture(nil, "BACKGROUND")
-        bg:SetAllPoints()
-        bg:SetTexture(0.12, 0.12, 0.25, 0.8)
-
-        -- Border
-        tile:SetBackdrop({
-            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-            tile = true, tileSize = 8, edgeSize = 10,
-            insets = { left = 2, right = 2, top = 2, bottom = 2 }
-        })
-        tile:SetBackdropColor(0.12, 0.12, 0.25, 0.8)
-        tile:SetBackdropBorderColor(0.4, 0.4, 0.7, 0.6)
-
-        -- Highlight
-        local hl = tile:CreateTexture(nil, "HIGHLIGHT")
-        hl:SetAllPoints()
-        hl:SetTexture(0.3, 0.3, 0.6, 0.3)
+        -- Background, border and highlight
+        FLUI.Skin(tile, "panel")
+        FLUI.Hover(tile)
 
         -- Dungeon name
         local nameText = tile:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -423,10 +346,10 @@ function ShowDungeonPanel()
             ShowDifficultyPanel()
         end)
         tile:SetScript("OnEnter", function(self)
-            self:SetBackdropBorderColor(1.0, 0.82, 0.0, 1.0)
+            self:SetBackdropBorderColor(FLUI.Color("accent"))
         end)
         tile:SetScript("OnLeave", function(self)
-            self:SetBackdropBorderColor(0.4, 0.4, 0.7, 0.6)
+            FLUI.Restyle(self)
         end)
 
         tile:Show()
@@ -596,10 +519,8 @@ function ShowDifficultyPanel()
     y = y - 40
 
     -- Confirm button — anchored to bottom of ContentFrame so it never overlaps text
-    local confirmBtn = CreateFrame("Button", nil, ContentFrame, "UIPanelButtonTemplate")
-    confirmBtn:SetSize(220, 30)
+    local confirmBtn = FLUI.Button(ContentFrame, "|cff00ff00Continue >>|r", 220, 30)
     confirmBtn:SetPoint("BOTTOM", ContentFrame, "BOTTOM", 0, 10)
-    confirmBtn:SetText("|cff00ff00Continue >>|r")
     confirmBtn:SetScript("OnClick", function()
         ShowConfirmPanel()
     end)
@@ -748,10 +669,8 @@ function ShowConfirmPanel()
     y = y - 14
 
     -- Start button
-    local startBtn = CreateFrame("Button", nil, ScrollChild, "UIPanelButtonTemplate")
-    startBtn:SetSize(200, 30)
+    local startBtn = FLUI.Button(ScrollChild, "|cff00ff00START CHALLENGE!|r", 200, 30)
     startBtn:SetPoint("TOP", ScrollChild, "TOP", 0, y)
-    startBtn:SetText("|cff00ff00START CHALLENGE!|r")
     startBtn:SetScript("OnClick", function()
         AIO.Msg()
             :Add("DungeonChallenge", "StartChallenge", d.mapId, diff)
@@ -978,7 +897,7 @@ local TRACKER_W = 250
 local TRK_PAD = 8
 local TRK_INNER = TRACKER_W - 2 * TRK_PAD
 
-local TrackerFrame = CreateFrame("Frame", "DCTrackerFrame", UIParent)
+local TrackerFrame = FLUI.Hud("DCTrackerFrame")
 TrackerFrame:SetWidth(TRACKER_W)
 TrackerFrame:SetHeight(180)
 TrackerFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -20, -180)
@@ -987,14 +906,6 @@ TrackerFrame:EnableMouse(true)
 TrackerFrame:RegisterForDrag("LeftButton")
 TrackerFrame:SetScript("OnDragStart", TrackerFrame.StartMoving)
 TrackerFrame:SetScript("OnDragStop", TrackerFrame.StopMovingOrSizing)
-TrackerFrame:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 16,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 }
-})
-TrackerFrame:SetBackdropColor(0.05, 0.05, 0.1, 0.92)
-TrackerFrame:SetBackdropBorderColor(0.4, 0.4, 0.8, 0.8)
 TrackerFrame:SetFrameStrata("HIGH")
 TrackerFrame:Hide()
 
@@ -1019,11 +930,10 @@ trkAffixes:SetWidth(TRK_INNER)
 trkAffixes:SetJustifyH("LEFT")
 
 -- Separator 1
-local trkSep1 = TrackerFrame:CreateTexture(nil, "ARTWORK")
+local trkSep1 = FLUI.Line(TrackerFrame)
 trkSep1:SetPoint("TOPLEFT", trkAffixes, "BOTTOMLEFT", -2, -3)
 trkSep1:SetWidth(TRK_INNER + 4)
 trkSep1:SetHeight(1)
-trkSep1:SetTexture(0.4, 0.4, 0.6, 0.5)
 
 -- Timer remaining (large)
 local trkTimer = TrackerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -1042,11 +952,10 @@ trkThresh:SetWidth(TRK_INNER)
 trkThresh:SetJustifyH("LEFT")
 
 -- Separator 2
-local trkSep2 = TrackerFrame:CreateTexture(nil, "ARTWORK")
+local trkSep2 = FLUI.Line(TrackerFrame)
 trkSep2:SetPoint("TOPLEFT", trkThresh, "BOTTOMLEFT", -2, -3)
 trkSep2:SetWidth(TRK_INNER + 4)
 trkSep2:SetHeight(1)
-trkSep2:SetTexture(0.4, 0.4, 0.6, 0.5)
 
 -- Boss list (multi-line)
 local trkBosses = TrackerFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1055,11 +964,10 @@ trkBosses:SetWidth(TRK_INNER)
 trkBosses:SetJustifyH("LEFT")
 
 -- Separator 3
-local trkSep3 = TrackerFrame:CreateTexture(nil, "ARTWORK")
+local trkSep3 = FLUI.Line(TrackerFrame)
 trkSep3:SetPoint("TOPLEFT", trkBosses, "BOTTOMLEFT", -2, -3)
 trkSep3:SetWidth(TRK_INNER + 4)
 trkSep3:SetHeight(1)
-trkSep3:SetTexture(0.4, 0.4, 0.6, 0.5)
 
 -- Deaths
 local trkDeaths = TrackerFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1212,7 +1120,7 @@ local counterHidden = false  -- manual toggle via /dc counters
 
 local COUNTER_W = 240
 
-local CounterFrame = CreateFrame("Frame", "DCCounterFrame", UIParent)
+local CounterFrame = FLUI.Hud("DCCounterFrame")
 CounterFrame:SetWidth(COUNTER_W)
 CounterFrame:SetHeight(46)
 CounterFrame:SetPoint("TOP", UIParent, "TOP", 0, -35)
@@ -1221,14 +1129,6 @@ CounterFrame:EnableMouse(true)
 CounterFrame:RegisterForDrag("LeftButton")
 CounterFrame:SetScript("OnDragStart", CounterFrame.StartMoving)
 CounterFrame:SetScript("OnDragStop", CounterFrame.StopMovingOrSizing)
-CounterFrame:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 16,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 }
-})
-CounterFrame:SetBackdropColor(0.05, 0.05, 0.1, 0.92)
-CounterFrame:SetBackdropBorderColor(0.4, 0.4, 0.8, 0.8)
 CounterFrame:SetFrameStrata("HIGH")
 CounterFrame:Hide()
 
@@ -1273,14 +1173,7 @@ SummaryFrame:EnableMouse(true)
 SummaryFrame:RegisterForDrag("LeftButton")
 SummaryFrame:SetScript("OnDragStart", SummaryFrame.StartMoving)
 SummaryFrame:SetScript("OnDragStop", SummaryFrame.StopMovingOrSizing)
-SummaryFrame:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 16,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 }
-})
-SummaryFrame:SetBackdropColor(0.05, 0.05, 0.1, 0.95)
-SummaryFrame:SetBackdropBorderColor(0.4, 0.4, 0.8, 0.8)
+FLUI.Skin(SummaryFrame, "dialog")
 SummaryFrame:SetFrameStrata("DIALOG")
 SummaryFrame:Hide()
 table.insert(UISpecialFrames, "DCSummaryFrame")
@@ -1310,10 +1203,8 @@ sumCountdown:SetPoint("BOTTOM", 0, 44)
 sumCountdown:SetWidth(SUMMARY_W - 24)
 sumCountdown:SetJustifyH("CENTER")
 
-local sumLeave = CreateFrame("Button", nil, SummaryFrame, "UIPanelButtonTemplate")
-sumLeave:SetSize(160, 26)
+local sumLeave = FLUI.Button(SummaryFrame, "Leave Now", 160, 26)
 sumLeave:SetPoint("BOTTOM", 0, 12)
-sumLeave:SetText("Leave Now")
 sumLeave:SetScript("OnClick", function()
     if not summaryLeaveSent then
         summaryLeaveSent = true
@@ -1436,13 +1327,7 @@ DC_ClientHandlers.ShowUI = function(player)
     end
 
     currentTab = "dungeons"
-    for i, tb in ipairs(tabButtons) do
-        if i == 1 then
-            tb.bg:SetTexture(0.25, 0.25, 0.5, 1.0)
-        else
-            tb.bg:SetTexture(0.15, 0.15, 0.3, 0.8)
-        end
-    end
+    MarkTab(1)
     ShowDungeonPanel()
     MainFrame:Show()
 end
@@ -1700,13 +1585,7 @@ SlashCmdList["DUNGEONCHALLENGE"] = function(msg)
         MainFrame:Hide()
     else
         currentTab = "dungeons"
-        for i, tb in ipairs(tabButtons) do
-            if i == 1 then
-                tb.bg:SetTexture(0.25, 0.25, 0.5, 1.0)
-            else
-                tb.bg:SetTexture(0.15, 0.15, 0.3, 0.8)
-            end
-        end
+        MarkTab(1)
         ShowDungeonPanel()
         MainFrame:Show()
     end
